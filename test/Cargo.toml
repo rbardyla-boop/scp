@@ -10,6 +10,8 @@ scp-identity.workspace = true
 scp-vitality.workspace = true
 scp-transport.workspace = true
 scp-recovery.workspace = true
+scp-ledger-substrate = { path = "../ledger/substrate" }
+scp-ledger-cosmos    = { path = "../ledger/cosmos" }
 tokio = { version = "1", features = ["full"] }
 x25519-dalek.workspace = true
 rand_core.workspace = true
