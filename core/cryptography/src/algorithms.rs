@@ -16,6 +16,11 @@ impl Default for AlgorithmSuite {
 }
 
 /// Negotiate the best mutually supported suite.
-pub fn negotiate(_local: &AlgorithmSuite, _remote: &AlgorithmSuite) -> AlgorithmSuite {
-    todo!("Phase 0: algorithm negotiation")
+/// Upgrades to PqMigration only when both sides explicitly support it.
+pub fn negotiate(local: &AlgorithmSuite, remote: &AlgorithmSuite) -> AlgorithmSuite {
+    if *local == AlgorithmSuite::PqMigration && *remote == AlgorithmSuite::PqMigration {
+        AlgorithmSuite::PqMigration
+    } else {
+        AlgorithmSuite::Current
+    }
 }

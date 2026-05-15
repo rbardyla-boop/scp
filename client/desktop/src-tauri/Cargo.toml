@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "scp-desktop"
 version = "0.1.0"
@@ -13,5 +15,5 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-scp-cryptography = { path = "../../core/cryptography" }
-scp-identity     = { path = "../../core/identity" }
+scp-cryptography = { path = "../../../core/cryptography" }
+scp-identity     = { path = "../../../core/identity" }

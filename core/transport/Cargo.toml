@@ -11,3 +11,4 @@ scp-vitality.workspace = true
 tokio.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+rand_core.workspace = true

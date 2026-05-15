@@ -11,3 +11,5 @@ scp-vitality.workspace = true
 scp-transport.workspace = true
 scp-recovery.workspace = true
 tokio = { version = "1", features = ["full"] }
+x25519-dalek.workspace = true
+rand_core.workspace = true

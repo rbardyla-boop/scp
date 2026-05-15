@@ -1,3 +1,4 @@
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 /// Opaque ephemeral symmetric session key (32 bytes, zeroized on drop).
@@ -25,7 +26,10 @@ impl RouteId {
 }
 
 impl FreshnessNonce {
+    /// Generate a cryptographically random nonce (not monotonic — avoids clock dependency).
     pub fn generate() -> Self {
-        todo!("Phase 0: monotonic nonce or secure random nonce")
+        let mut buf = [0u8; 8];
+        OsRng.fill_bytes(&mut buf);
+        Self(u64::from_le_bytes(buf))
     }
 }

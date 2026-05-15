@@ -10,3 +10,4 @@ serde.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+rand_core.workspace = true
