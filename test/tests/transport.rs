@@ -1,5 +1,5 @@
 // Phase 0 cryptographic core tests.
-// Phase 2+ transport tests will be added when FlashSession is implemented.
+// Phase 2 transport tests: RouteId, WarmCache, FlashSession lifecycle.
 
 use scp_cryptography::keys::{hash, KeyPair, PublicKey, SessionKey};
 use scp_cryptography::algorithms::{negotiate, AlgorithmSuite};
@@ -188,4 +188,122 @@ fn freshness_nonce_unique() {
 
     let nonces: HashSet<u64> = (0..100).map(|_| FreshnessNonce::generate().0).collect();
     assert_eq!(nonces.len(), 100, "all 100 nonces must be distinct");
+}
+
+// ── Phase 2: RouteId ────────────────────────────────────────────────────────
+
+#[test]
+fn route_id_generate_is_unique() {
+    use scp_transport::session::RouteId;
+    use std::collections::HashSet;
+
+    let ids: HashSet<[u8; 16]> = (0..100).map(|_| RouteId::generate().0).collect();
+    assert_eq!(ids.len(), 100, "all 100 route IDs must be distinct");
+}
+
+// ── Phase 2: WarmCache ──────────────────────────────────────────────────────
+
+#[test]
+fn warm_cache_retain_and_retrieve() {
+    use scp_relay_cache::WarmCache;
+    use std::time::Duration;
+
+    let cache = WarmCache::new(Duration::from_secs(600));
+    let route_id = [1u8; 16];
+    let key = [2u8; 32];
+
+    cache.retain(&route_id, &key);
+    assert_eq!(cache.get(&route_id), Some(key), "warm entry must be retrievable before expiry");
+}
+
+#[test]
+fn warm_cache_expired_entry_is_none() {
+    use scp_relay_cache::WarmCache;
+    use std::time::Duration;
+
+    let cache = WarmCache::new(Duration::ZERO);
+    let route_id = [3u8; 16];
+    let key = [4u8; 32];
+
+    cache.retain(&route_id, &key);
+    // Duration::ZERO means expires == Instant::now() at insert time;
+    // any subsequent get sees Instant::now() >= expires → evicted.
+    assert_eq!(cache.get(&route_id), None, "zero-TTL entry must be immediately expired");
+}
+
+#[test]
+fn warm_cache_purge_clears_all() {
+    use scp_relay_cache::WarmCache;
+    use std::time::Duration;
+
+    let cache = WarmCache::new(Duration::from_secs(600));
+    for i in 0u8..5 {
+        cache.retain(&[i; 16], &[i; 32]);
+    }
+    cache.purge();
+    for i in 0u8..5 {
+        assert_eq!(cache.get(&[i; 16]), None, "all entries must be gone after purge");
+    }
+}
+
+// ── Phase 2: FlashSession lifecycle ────────────────────────────────────────
+
+#[tokio::test]
+async fn flash_session_full_lifecycle() {
+    use scp_relay_cache::WarmCache;
+    use scp_transport::flash::{FlashSession, FlashSessionLifecycle};
+    use std::time::Duration;
+
+    let cache = WarmCache::new(Duration::from_secs(600));
+    let recipient_pub = [7u8; 32];
+
+    // Step 1: retrieve state.
+    let state = FlashSession::retrieve_state(&recipient_pub)
+        .await
+        .expect("retrieve_state must succeed");
+    assert!(state.vitality.is_open(), "simulated recipient must be open");
+
+    // Steps 2–4: open session and transmit.
+    let session = FlashSession::open_and_send(state, b"sovereign payload", &cache)
+        .await
+        .expect("open_and_send must succeed");
+
+    // Capture fields before consuming session in dissolve.
+    let route_id = session.route.0;
+    let key_bytes = session.session_key.0;
+    assert!(
+        matches!(session.lifecycle, FlashSessionLifecycle::WarmCache { .. }),
+        "lifecycle must be WarmCache after open_and_send"
+    );
+
+    // Verify warm cache was populated.
+    let cached = cache.get(&route_id);
+    assert!(cached.is_some(), "session key must be in warm cache after open_and_send");
+    assert_eq!(cached.unwrap(), key_bytes, "cached key must match session key");
+
+    // Step 5: dissolve (consumes session; SessionKey zeroized on drop).
+    session.dissolve();
+}
+
+#[tokio::test]
+async fn flash_session_rejects_closed_vitality() {
+    use scp_relay_cache::WarmCache;
+    use scp_transport::flash::{FlashSession, RecipientState, TransportError};
+    use scp_vitality::VitalityState;
+    use std::time::Duration;
+
+    let cache = WarmCache::new(Duration::from_secs(600));
+
+    for vitality in [VitalityState::Suspended, VitalityState::Severed, VitalityState::Burned] {
+        let state = RecipientState {
+            ops_pub: [1u8; 32],
+            vitality,
+            routing_hints: vec![],
+        };
+        let result = FlashSession::open_and_send(state, b"blocked payload", &cache).await;
+        assert!(
+            matches!(result, Err(TransportError::VitalityInsufficient(_))),
+            "closed vitality state must reject transmission — transport must obey consent state"
+        );
+    }
 }
