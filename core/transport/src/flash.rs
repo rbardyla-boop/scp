@@ -81,14 +81,28 @@ impl FlashSession {
         })
     }
 
-    /// Step 5: destroy all transport state.
+    /// Step 5: destroy all transport state. Returns a DissolvedProof token.
     ///
     /// Consuming self drops SessionKey, which is zeroized by its Drop impl.
     /// Warm cache entries expire by TTL. For immediate eviction in high-security
     /// contexts, call cache.purge() before calling dissolve().
-    pub fn dissolve(self) {
-        drop(self);
+    ///
+    /// The returned DissolvedProof is #[must_use]: discarding it silently is
+    /// a compile-time warning, forcing callers to acknowledge dissolution.
+    pub fn dissolve(self) -> DissolvedProof {
+        let route = self.route.clone();
+        drop(self); // SessionKey is zeroized here
+        DissolvedProof { route }
     }
+}
+
+/// Proof that a flash session was explicitly dissolved.
+///
+/// Carries the RouteId of the dissolved session for audit or warm-cache
+/// eviction purposes. Phase 4+: add a dissolution timestamp.
+#[must_use = "dissolution must be acknowledged — use the proof or call cache.purge()"]
+pub struct DissolvedProof {
+    pub route: RouteId,
 }
 
 /// Minimal recipient state retrieved from the state layer.

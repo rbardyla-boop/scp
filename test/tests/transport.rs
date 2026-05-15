@@ -282,7 +282,8 @@ async fn flash_session_full_lifecycle() {
     assert_eq!(cached.unwrap(), key_bytes, "cached key must match session key");
 
     // Step 5: dissolve (consumes session; SessionKey zeroized on drop).
-    session.dissolve();
+    let proof = session.dissolve();
+    assert_eq!(proof.route.0, route_id, "dissolved proof must carry the session's route ID");
 }
 
 #[tokio::test]
@@ -306,4 +307,101 @@ async fn flash_session_rejects_closed_vitality() {
             "closed vitality state must reject transmission — transport must obey consent state"
         );
     }
+}
+
+// ── Phase 3: protocol domains ───────────────────────────────────────────────
+
+#[test]
+fn domain_constants_are_all_distinct() {
+    use scp_cryptography::domains::{
+        SCP_DOMAIN_RELAY, SCP_DOMAIN_RECOVERY, SCP_DOMAIN_TRANSPORT,
+        SCP_DOMAIN_TUNNEL, SCP_DOMAIN_VITALITY,
+    };
+
+    let constants: &[&[u8]] = &[
+        SCP_DOMAIN_TRANSPORT,
+        SCP_DOMAIN_RELAY,
+        SCP_DOMAIN_RECOVERY,
+        SCP_DOMAIN_VITALITY,
+        SCP_DOMAIN_TUNNEL,
+    ];
+    for i in 0..constants.len() {
+        for j in (i + 1)..constants.len() {
+            assert_ne!(
+                constants[i], constants[j],
+                "domain constants must all be distinct to prevent cross-context reuse"
+            );
+        }
+    }
+}
+
+// ── Phase 3: BlindRelay — local and TCP ────────────────────────────────────
+
+#[tokio::test]
+async fn blind_relay_local_accepts_opaque_bytes() {
+    use scp_relay_mesh::{RelayNode, route_burst};
+
+    let relay = RelayNode { id: [0u8; 16], endpoint: "local://loopback".to_string() };
+    let result = route_burst(b"opaque burst - relay must not inspect this".to_vec(), vec![relay]).await;
+    assert!(result.is_ok(), "local blind relay must accept any opaque payload");
+}
+
+#[tokio::test]
+async fn tcp_relay_burst_delivers_and_disconnects() {
+    use scp_relay_mesh::{spawn_relay_listener, RelayNode, route_burst};
+
+    let addr = spawn_relay_listener().await.expect("relay listener must bind");
+    let relay = RelayNode { id: [1u8; 16], endpoint: addr.to_string() };
+
+    let result = route_burst(b"sovereign burst payload".to_vec(), vec![relay]).await;
+    assert!(result.is_ok(), "real TCP relay must accept and ACK the burst");
+}
+
+// ── Phase 3: DissolvedProof ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn dissolved_proof_captures_route_id() {
+    use scp_relay_cache::WarmCache;
+    use scp_transport::flash::FlashSession;
+    use std::time::Duration;
+
+    let cache = WarmCache::new(Duration::from_secs(600));
+    let state = FlashSession::retrieve_state(&[9u8; 32]).await.unwrap();
+    let session = FlashSession::open_and_send(state, b"payload", &cache).await.unwrap();
+
+    let expected_route = session.route.0;
+    let proof = session.dissolve();
+
+    assert_eq!(
+        proof.route.0, expected_route,
+        "DissolvedProof must carry the exact RouteId of the dissolved session"
+    );
+}
+
+#[tokio::test]
+async fn dissolved_proof_route_differs_across_sessions() {
+    use scp_relay_cache::WarmCache;
+    use scp_transport::flash::FlashSession;
+    use std::time::Duration;
+
+    let cache = WarmCache::new(Duration::from_secs(600));
+
+    let s1 = FlashSession::open_and_send(
+        FlashSession::retrieve_state(&[1u8; 32]).await.unwrap(),
+        b"first",
+        &cache,
+    ).await.unwrap();
+    let s2 = FlashSession::open_and_send(
+        FlashSession::retrieve_state(&[2u8; 32]).await.unwrap(),
+        b"second",
+        &cache,
+    ).await.unwrap();
+
+    let p1 = s1.dissolve();
+    let p2 = s2.dissolve();
+
+    assert_ne!(
+        p1.route.0, p2.route.0,
+        "each dissolved session must have a distinct route ID — routes must never be reused"
+    );
 }
