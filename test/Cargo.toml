@@ -1,0 +1,13 @@
+[package]
+name = "scp-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dev-dependencies]
+scp-cryptography.workspace = true
+scp-identity.workspace = true
+scp-vitality.workspace = true
+scp-transport.workspace = true
+scp-recovery.workspace = true
+tokio = { version = "1", features = ["full"] }

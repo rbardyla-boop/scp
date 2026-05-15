@@ -1,0 +1,10 @@
+[package]
+name = "scp-relay-mesh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+thiserror.workspace = true
+serde.workspace = true

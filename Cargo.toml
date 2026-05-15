@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "core/cryptography",
+    "core/identity",
+    "core/vitality",
+    "core/transport",
+    "core/recovery",
+    "relay/mesh",
+    "relay/cache",
+    "relay/perturbation",
+    "ledger/substrate",
+    "ledger/cosmos",
+    # "client/desktop/src-tauri",  # standalone — requires webkit2gtk on Linux
+    "test",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0"
+authors = ["SCP Contributors"]
+
+[workspace.dependencies]
+# Cryptography
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+chacha20poly1305 = "0.10"
+blake3 = "1.5"
+rand = "0.8"
+rand_core = "0.6"
+zeroize = { version = "1.7", features = ["derive"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_cbor = "0.11"
+
+# Error handling
+thiserror = "1"
+
+# Identity
+uuid = { version = "1", features = ["v4"] }
+
+# Internal path deps
+scp-cryptography = { path = "core/cryptography" }
+scp-identity     = { path = "core/identity" }
+scp-vitality     = { path = "core/vitality" }
+scp-transport    = { path = "core/transport" }
+scp-recovery     = { path = "core/recovery" }

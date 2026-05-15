@@ -1,0 +1,12 @@
+[package]
+name = "scp-recovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+scp-cryptography.workspace = true
+scp-identity.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true

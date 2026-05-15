@@ -1,0 +1,13 @@
+[package]
+name = "scp-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+scp-cryptography.workspace = true
+scp-identity.workspace = true
+scp-vitality.workspace = true
+tokio.workspace = true
+serde.workspace = true
+thiserror.workspace = true

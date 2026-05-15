@@ -1,0 +1,27 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Android
+client/mobile/android/.gradle/
+client/mobile/android/local.properties
+client/mobile/android/app/build/
+client/mobile/android/.idea/
+client/mobile/android/*.iml
+client/mobile/android/captures/
+
+# Node / Tauri
+client/desktop/node_modules/
+client/desktop/dist/
+client/desktop/src-tauri/target/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
