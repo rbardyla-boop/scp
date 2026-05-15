@@ -16,7 +16,7 @@ pub struct BlindedShard(pub Vec<u8>);
 /// 3. Guardians release encrypted shards
 /// 4. Threshold reconstruction
 /// 5. Identity shedding triggered
-pub fn reconstruct(shards: Vec<BlindedShard>) -> Result<RecoveredIdentity, RecoveryError> {
+pub fn reconstruct(_shards: Vec<BlindedShard>) -> Result<RecoveredIdentity, RecoveryError> {
     todo!("Phase 4: Shamir / threshold reconstruction from guardian shards")
 }
 

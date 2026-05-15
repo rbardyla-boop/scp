@@ -54,7 +54,7 @@ impl SessionKey {
 }
 
 /// Hash `data` with BLAKE3. Returns a 32-byte digest.
-pub fn hash(data: &[u8]) -> [u8; 32] {
+pub fn hash(_data: &[u8]) -> [u8; 32] {
     todo!("Phase 0: BLAKE3 hash")
 }
 

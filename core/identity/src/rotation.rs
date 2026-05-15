@@ -7,8 +7,8 @@ pub struct RotationEvent {
     pub old_ops_pub: [u8; 32],
     /// The new operational public key.
     pub new_ops_pub: [u8; 32],
-    /// Root-key signature over (old_ops_pub || new_ops_pub || timestamp_nonce).
-    pub root_sig: [u8; 64],
+    /// Root-key signature (Ed25519, 64 bytes) over (old_ops_pub || new_ops_pub || timestamp_nonce).
+    pub root_sig: Vec<u8>,
     /// Monotonic timestamp nonce to prevent replay.
     pub nonce: u64,
 }

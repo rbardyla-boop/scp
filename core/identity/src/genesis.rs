@@ -1,4 +1,3 @@
-use scp_cryptography::keys::KeyPair;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 

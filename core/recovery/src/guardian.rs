@@ -18,7 +18,7 @@ pub struct GuardianBind {
 impl GuardianBind {
     /// Bind guardians and distribute blinded shards.
     /// Guardians receive encrypted opaque blobs — they cannot learn what they hold.
-    pub fn execute(guardians: Vec<Guardian>, threshold: u8) -> Result<Self, RecoveryError> {
+    pub fn execute(guardians: Vec<Guardian>, _threshold: u8) -> Result<Self, RecoveryError> {
         assert!(
             (3..=7).contains(&(guardians.len() as u8)),
             "SCP requires 3–7 guardians"
