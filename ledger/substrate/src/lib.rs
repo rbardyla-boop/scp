@@ -1,4 +1,6 @@
 use scp_cryptography::keys::{hash, PublicKey};
+use scp_wire_format::signing::{registration_message, rotation_message, tunnel_consent_input};
+pub use scp_wire_format::signing::handshake_sig_message;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
@@ -106,7 +108,7 @@ impl SubstrateLedger {
         record: &LedgerIdentityRecord,
         root_sig: &[u8; 64],
     ) -> Result<(), LedgerError> {
-        let msg = registration_message(record);
+        let msg = registration_message(&record.k_root_pub, &record.k_ops_pub, &record.recovery_policy_hash);
         if !PublicKey(record.k_root_pub).verify(&msg, root_sig) {
             return Err(LedgerError::InvalidSignature);
         }
@@ -316,42 +318,9 @@ impl SubstrateLedger {
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
-fn registration_message(r: &LedgerIdentityRecord) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(96);
-    msg.extend_from_slice(&r.k_root_pub);
-    msg.extend_from_slice(&r.k_ops_pub);
-    msg.extend_from_slice(&r.recovery_policy_hash);
-    msg
-}
-
-fn rotation_message(old: &[u8; 32], new: &[u8; 32], nonce: u64) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(72);
-    msg.extend_from_slice(old);
-    msg.extend_from_slice(new);
-    msg.extend_from_slice(&nonce.to_le_bytes());
-    msg
-}
-
-/// Canonical signature message for a handshake ephemeral publication (67 bytes).
-///
-/// Format: `b"scp:handshake-ephemeral:v1:" || pub_key || expires_at_le`.
-/// This format is protocol-stable — both publisher (ops key signs) and
-/// verifier (ledger and transport layer check) must use it verbatim.
-pub fn handshake_sig_message(pub_key: &[u8; 32], expires_at: u64) -> [u8; 67] {
-    let mut msg = [0u8; 67];
-    msg[0..27].copy_from_slice(b"scp:handshake-ephemeral:v1:");
-    msg[27..59].copy_from_slice(pub_key);
-    msg[59..67].copy_from_slice(&expires_at.to_le_bytes());
-    msg
-}
-
 /// Canonical tunnel consent hash — parties sorted so A ≤ B lexicographically.
 pub fn tunnel_consent_hash(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
-    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-    let mut msg = b"scp:tunnel:v1:".to_vec();
-    msg.extend_from_slice(lo);
-    msg.extend_from_slice(hi);
-    hash(&msg)
+    hash(&tunnel_consent_input(a, b))
 }
 
 // ── Error type ──────────────────────────────────────────────────────────────

@@ -1,0 +1,8 @@
+[package]
+name = "scp-wire-format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# No SCP crate deps — this is the leaf.
+# No external deps — pure byte arithmetic.

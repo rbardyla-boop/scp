@@ -1,21 +1,10 @@
 pub mod bootstrap;
 
 use bootstrap::BootstrapConfig;
+use scp_wire_format::constants::{NOISE_PARAMS, RELAY_ACK_BYTE};
+use scp_wire_format::framing::{decode_noise_length, decode_tcp_length, encode_noise_frame, encode_tcp_frame};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-
-// ── Noise Protocol parameters ───────────────────────────────────────────────
-
-/// Canonical Noise pattern for SCP relay encryption.
-///
-/// XX: mutual authentication — neither party's static key is known in advance.
-/// 25519: X25519 Diffie-Hellman.
-/// ChaChaPoly: ChaCha20-Poly1305 AEAD.
-/// BLAKE2s: BLAKE2s hash (Noise standard; SCP uses BLAKE3 elsewhere).
-///
-/// Phase 5: consider migrating to a custom Noise extension with BLAKE3,
-/// or wrapping the Noise layer with an outer BLAKE3-derived session key.
-const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 
 // ── BlindRelay abstraction ──────────────────────────────────────────────────
 
@@ -70,12 +59,10 @@ async fn tcp_forward(payload: &[u8], addr: SocketAddr) -> Result<(), MeshError> 
     use tokio::net::TcpStream;
 
     let mut stream = TcpStream::connect(addr).await.map_err(|_| MeshError::RelayRefused)?;
-    let len = payload.len() as u32;
-    stream.write_all(&len.to_le_bytes()).await.map_err(|_| MeshError::Timeout)?;
-    stream.write_all(payload).await.map_err(|_| MeshError::Timeout)?;
+    stream.write_all(&encode_tcp_frame(payload)).await.map_err(|_| MeshError::Timeout)?;
     let mut ack = [0u8; 1];
     stream.read_exact(&mut ack).await.map_err(|_| MeshError::Timeout)?;
-    if ack[0] != 0x01 {
+    if ack[0] != RELAY_ACK_BYTE {
         return Err(MeshError::RelayRefused);
     }
     Ok(())
@@ -89,9 +76,7 @@ async fn write_noise_msg(
     msg: &[u8],
 ) -> Result<(), MeshError> {
     use tokio::io::AsyncWriteExt;
-    let len = (msg.len() as u16).to_be_bytes();
-    stream.write_all(&len).await.map_err(|_| MeshError::Timeout)?;
-    stream.write_all(msg).await.map_err(|_| MeshError::Timeout)?;
+    stream.write_all(&encode_noise_frame(msg)).await.map_err(|_| MeshError::Timeout)?;
     Ok(())
 }
 
@@ -103,7 +88,7 @@ async fn read_noise_msg(
     use tokio::io::AsyncReadExt;
     let mut len_bytes = [0u8; 2];
     stream.read_exact(&mut len_bytes).await.map_err(|_| MeshError::Timeout)?;
-    let len = u16::from_be_bytes(len_bytes) as usize;
+    let len = decode_noise_length(&len_bytes);
     stream.read_exact(&mut buf[..len]).await.map_err(|_| MeshError::Timeout)?;
     Ok(len)
 }
@@ -153,7 +138,7 @@ async fn noise_forward(payload: &[u8], addr: SocketAddr) -> Result<(), MeshError
     // Receive encrypted ACK.
     let len = read_noise_msg(&mut stream, &mut rx).await?;
     let plen = transport.read_message(&rx[..len], &mut plain).map_err(|_| MeshError::Timeout)?;
-    if plen != 1 || plain[0] != 0x01 {
+    if plen != 1 || plain[0] != RELAY_ACK_BYTE {
         return Err(MeshError::RelayRefused);
     }
 
@@ -199,7 +184,7 @@ async fn handle_noise_connection(
     let _ = &plain[..plen];
 
     // Send encrypted ACK.
-    let len = transport.write_message(&[0x01], &mut tx).map_err(|_| MeshError::Timeout)?;
+    let len = transport.write_message(&[RELAY_ACK_BYTE], &mut tx).map_err(|_| MeshError::Timeout)?;
     write_noise_msg(&mut stream, &tx[..len]).await?;
 
     Ok(())
@@ -282,11 +267,11 @@ pub async fn spawn_relay_listener() -> Result<SocketAddr, MeshError> {
             tokio::spawn(async move {
                 let mut len_bytes = [0u8; 4];
                 if stream.read_exact(&mut len_bytes).await.is_err() { return; }
-                let len = u32::from_le_bytes(len_bytes) as usize;
+                let len = decode_tcp_length(&len_bytes);
                 let mut payload = vec![0u8; len];
                 if stream.read_exact(&mut payload).await.is_err() { return; }
                 drop(payload); // intentionally blind
-                let _ = stream.write_all(&[0x01]).await;
+                let _ = stream.write_all(&[RELAY_ACK_BYTE]).await;
             });
         }
     });

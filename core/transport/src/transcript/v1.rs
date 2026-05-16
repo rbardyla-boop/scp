@@ -1,6 +1,7 @@
 use crate::session::{FreshnessNonce, RouteId};
 use scp_cryptography::domains::{scp_derive_key, DomainLabel};
 use scp_vitality::VitalityState;
+use scp_wire_format::transcript::transcript_v1_bytes;
 
 /// Transcript of a flash session — v1 (Phase 4 through Phase 5).
 ///
@@ -39,15 +40,13 @@ impl FlashTranscript {
             VitalityState::Burned    => 5,
         };
 
-        let mut data = [0u8; 63];
-        data[0..4].copy_from_slice(b"SCPt");
-        data[4]      = 0x01;
-        data[5..21].copy_from_slice(&self.route_id.0);
-        data[21..29].copy_from_slice(&self.nonce.0.to_le_bytes());
-        data[29..61].copy_from_slice(&self.recipient_ops_pub);
-        data[61]     = vitality_byte;
-        data[62]     = self.protocol_version;
-
+        let data = transcript_v1_bytes(
+            &self.route_id.0,
+            self.nonce.0,
+            &self.recipient_ops_pub,
+            vitality_byte,
+            self.protocol_version,
+        );
         scp_derive_key(DomainLabel::Transcript, &data)
     }
 }

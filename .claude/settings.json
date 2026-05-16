@@ -1,0 +1,52 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(sed '1d;$d')",
+      "Bash(node --check /tmp/fo_script.js)",
+      "Bash(python3 -c ':*)",
+      "Bash(node --check /tmp/fo_script2.js)",
+      "Bash(sort echo:*)",
+      "Bash(grep -rn \"og-image\" *.html)",
+      "Bash(grep -rn \"chart.js@\" *.html)",
+      "Bash(awk 'NR==590' index.html)",
+      "Bash(awk 'NR==1661' index.html)",
+      "Bash(awk 'NR==1662' index.html)",
+      "Bash(find . -name \"*.html\" -exec sed -i 's|https://clovelearn.io/icons/og-image.jpg|https://clovelearn.io/og-image.jpg|g' {} \\\\;)",
+      "Bash(grep -r \"chart.js@\" *.html)",
+      "Bash(node --check /tmp/fo_final.js)",
+      "Read(//home/thebackhand/Downloads/clovelearn_v3_final_deploy echo === Main script block \\(ends at first </script>\\) === awk /^<script>$/{p=1;next} /^<\\\\/script>$/{if\\(p\\){p=0;exit}} p field-ops.html node --check /tmp/**)",
+      "Bash(wc -l /home/thebackhand/Downloads/clovelearn_v3_final_deploy/anchor/*.js /home/thebackhand/Downloads/clovelearn_v3_final_deploy/anchor/*.md)",
+      "Bash(grep -n \"getCurrentCategory\" /home/thebackhand/Downloads/clovelearn_v3_final_deploy/anchor/*.js)",
+      "Bash(grep -n \"currentSessionDirectives\" /home/thebackhand/Downloads/clovelearn_v3_final_deploy/anchor/*.js)",
+      "Bash(grep -h \"g\\\\.\\\\\\(oda[A-Za-z]*\\\\\\) =\" /home/thebackhand/Downloads/clovelearn_v3_final_deploy/anchor/*.js)",
+      "Bash(grep -hP 'g\\\\.oda[A-Za-z]+ =' /home/thebackhand/Downloads/clovelearn_v3_final_deploy/anchor/*.js)",
+      "Bash(grep -h \"g\\\\.oda[A-Za-z]* =\" /home/thebackhand/Downloads/clovelearn_v3_final_deploy/anchor/*.js)",
+      "Bash(wc -l /home/thebackhand/Downloads/clovelearn_v3_final_deploy/anchor/*.js)",
+      "Bash(grep -v \"^\\\\.\\\\.$\")",
+      "Bash(grep -v '/index.html$')",
+      "Bash(grep -l 'particle-bg.js' /home/thebackhand/Downloads/clovelearn_v3_final_deploy/*.html)",
+      "Bash(grep -L \"particle-bg\" /home/thebackhand/Downloads/clovelearn_v3_final_deploy/*.html)",
+      "Bash(grep -H \"particle-bg\" /home/thebackhand/Downloads/clovelearn_v3_final_deploy/*.html)",
+      "Bash(xargs basename:*)",
+      "Bash(grep -l \"particle-bg\" /home/thebackhand/Downloads/clovelearn_v3_final_deploy/*.html)",
+      "Bash(git -C /home/thebackhand/Downloads/clovelearn_v3_final_deploy show 9abf7c1 --stat)",
+      "Bash(git -C /home/thebackhand/Downloads/clovelearn_v3_final_deploy diff HEAD~6 HEAD -- toolshed.html)",
+      "Bash(git -C /home/thebackhand/Downloads/clovelearn_v3_final_deploy log --oneline --all)",
+      "Bash(git -C /home/thebackhand/Downloads/clovelearn_v3_final_deploy status)",
+      "Bash(git -C /home/thebackhand/Downloads/clovelearn_v3_final_deploy show 9c8b4d6 -- toolshed.html)",
+      "Bash(git -C /home/thebackhand/Downloads/clovelearn_v3_final_deploy show 9c8b4d6 -- stuck-points-drill.html)",
+      "Bash(git -C /home/thebackhand/Downloads/clovelearn_v3_final_deploy show 9c8b4d6 -- dear-man-drill.html)",
+      "Bash(grep -rn \"particle-bg\\\\|three@0.134\" /home/thebackhand/Downloads/clovelearn_v3_final_deploy/*.html)",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(grep -l \"setDomain\\\\|completeFieldProtocol\\\\|fp-panel\\\\|FP_DOMAINS\\\\|FP_ZONES\\\\|doCheckIn\" /home/thebackhand/Downloads/clovelearn_v3_final_deploy/*.html)",
+      "Bash(awk '/\\\\.fp-/{p=NR} p && NR-p<2 {print NR\": \"$0}' /home/thebackhand/Downloads/clovelearn_v3_final_deploy/index.html)",
+      "Bash(grep -v '\\\\.html$\\\\|\\\\.js$\\\\|\\\\.css$\\\\|\\\\.png$\\\\|\\\\.jpg$\\\\|\\\\.ico$')",
+      "Bash(awk '/window\\\\.odIntegrity=async/,/^\\\\/\\\\/ ── Restore tab/' /home/thebackhand/Downloads/clovelearn_v3_final_deploy/index.html)",
+      "Bash(echo \"morphFrom exit: $?\")"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}

@@ -18,3 +18,4 @@ scp-ledger-cosmos    = { path = "../ledger/cosmos" }
 tokio = { version = "1", features = ["full"] }
 x25519-dalek.workspace = true
 rand_core.workspace = true
+rand.workspace = true

@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+scp-wire-format.workspace = true
+scp-ledger-substrate.workspace = true
 scp-cryptography.workspace = true
 scp-identity.workspace = true
 scp-vitality.workspace = true

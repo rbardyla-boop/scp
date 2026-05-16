@@ -7,8 +7,10 @@ use scp_relay_cache::WarmCache;
 use scp_relay_mesh::{discover_relays, route_burst};
 use scp_relay_perturbation::PerturbationEngine;
 use scp_vitality::VitalityState;
+use crate::state::StateProvider;
+use scp_wire_format::signing::handshake_sig_message;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The five-step flash session lifecycle (spec §7.2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +98,17 @@ impl FlashSession {
         let (ephemeral_seed, transcript_hash) = match &state.handshake_ephemeral {
             Some(hk) => {
                 // v2 path: bilateral DH.
+                // Defense-in-depth: transport layer independently rejects expired ephemerals
+                // even if the state layer failed to filter them. This guards against a
+                // compromised state layer feeding stale-but-validly-signed keys.
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                if hk.expires_at <= now {
+                    return Err(TransportError::HandshakeKeyExpired);
+                }
+
                 // Verify recipient's handshake ephemeral was signed by their ops key.
                 let sig_msg = handshake_sig_message(&hk.pub_key, hk.expires_at);
                 if !PublicKey(state.ops_pub).verify(&sig_msg, &hk.sig) {
@@ -223,18 +236,7 @@ pub enum TransportError {
     TransmissionFailed,
     #[error("handshake ephemeral key failed signature verification")]
     HandshakeKeyInvalid,
+    #[error("handshake ephemeral key has expired")]
+    HandshakeKeyExpired,
 }
 
-// ── Internal helpers ────────────────────────────────────────────────────────
-
-/// Canonical signature message for a published handshake ephemeral (67 bytes).
-///
-/// Must match `scp_ledger_substrate::handshake_sig_message` exactly.
-/// Format: `b"scp:handshake-ephemeral:v1:" || pub_key || expires_at_le`.
-fn handshake_sig_message(pub_key: &[u8; 32], expires_at: u64) -> [u8; 67] {
-    let mut msg = [0u8; 67];
-    msg[0..27].copy_from_slice(b"scp:handshake-ephemeral:v1:");
-    msg[27..59].copy_from_slice(pub_key);
-    msg[59..67].copy_from_slice(&expires_at.to_le_bytes());
-    msg
-}

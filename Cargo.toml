@@ -2,6 +2,7 @@
 resolver = "2"
 
 members = [
+    "scp-wire-format",
     "core/cryptography",
     "core/identity",
     "core/vitality",
@@ -54,6 +55,7 @@ scp-identity     = { path = "core/identity" }
 scp-vitality     = { path = "core/vitality" }
 scp-transport    = { path = "core/transport" }
 scp-recovery     = { path = "core/recovery" }
+scp-wire-format        = { path = "scp-wire-format" }
 scp-relay-mesh         = { path = "relay/mesh" }
 scp-relay-cache        = { path = "relay/cache" }
 scp-relay-perturbation = { path = "relay/perturbation" }
