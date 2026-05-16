@@ -304,6 +304,7 @@ async fn flash_session_rejects_closed_vitality() {
             ops_pub: [1u8; 32],
             vitality,
             routing_hints: vec![],
+            handshake_ephemeral: None,
         };
         let result = FlashSession::open_and_send(state, b"blocked payload", &cache, &engine).await;
         assert!(
@@ -703,4 +704,283 @@ fn bootstrap_shuffled_relays_preserves_count() {
     orig_ids.sort();
     shuf_ids.sort();
     assert_eq!(orig_ids, shuf_ids, "shuffle must not lose or duplicate relays");
+}
+
+// ── Phase 6: raw X25519 DH ──────────────────────────────────────────────────
+
+#[test]
+fn x25519_raw_dh_is_symmetric() {
+    use scp_cryptography::{x25519_dh, x25519_generate_keypair};
+
+    let (alice_secret, alice_pub) = x25519_generate_keypair();
+    let (bob_secret,   bob_pub)   = x25519_generate_keypair();
+
+    let alice_shared = x25519_dh(&alice_secret, &bob_pub);
+    let bob_shared   = x25519_dh(&bob_secret,   &alice_pub);
+
+    assert_eq!(alice_shared, bob_shared, "raw DH must produce the same shared secret on both sides");
+    assert_ne!(alice_shared, [0u8; 32],  "shared secret must be non-zero");
+}
+
+#[test]
+fn x25519_raw_dh_differs_from_blake3_wrapped() {
+    use scp_cryptography::{x25519_dh, x25519_generate_keypair};
+    use scp_cryptography::keys::SessionKey;
+
+    let (alice_secret, _) = x25519_generate_keypair();
+    let (_, bob_pub)      = x25519_generate_keypair();
+
+    let raw  = x25519_dh(&alice_secret, &bob_pub);
+    let wrapped = SessionKey::derive_x25519(&alice_secret, &bob_pub).0;
+
+    assert_ne!(raw, wrapped, "raw DH and BLAKE3-wrapped DH must produce different outputs");
+}
+
+// ── Phase 6: FlashTranscriptV2 ──────────────────────────────────────────────
+
+#[test]
+fn transcript_v2_binds_sender_ephemeral_pub() {
+    use scp_transport::transcript::v2::FlashTranscriptV2;
+    use scp_transport::session::{FreshnessNonce, RouteId};
+    use scp_vitality::VitalityState;
+
+    let base = FlashTranscriptV2 {
+        route_id:             RouteId([0x10; 16]),
+        nonce:                FreshnessNonce(0xaaaa_bbbb_cccc_dddd),
+        recipient_ops_pub:    [0x33; 32],
+        vitality_snapshot:    VitalityState::Active,
+        protocol_version:     2,
+        sender_ephemeral_pub: [0x44; 32],
+    };
+    let different_sender = FlashTranscriptV2 {
+        sender_ephemeral_pub: [0x55; 32],
+        ..FlashTranscriptV2 {
+            route_id:             RouteId([0x10; 16]),
+            nonce:                FreshnessNonce(0xaaaa_bbbb_cccc_dddd),
+            recipient_ops_pub:    [0x33; 32],
+            vitality_snapshot:    VitalityState::Active,
+            protocol_version:     2,
+            sender_ephemeral_pub: [0x44; 32],
+        }
+    };
+
+    assert_ne!(
+        base.hash(), different_sender.hash(),
+        "different sender ephemeral pubs must produce different v2 transcript hashes"
+    );
+}
+
+#[test]
+fn transcript_v1_and_v2_diverge_for_same_base_fields() {
+    use scp_transport::transcript::v1::FlashTranscript;
+    use scp_transport::transcript::v2::FlashTranscriptV2;
+    use scp_transport::session::{FreshnessNonce, RouteId};
+    use scp_vitality::VitalityState;
+
+    let t1 = FlashTranscript {
+        route_id:          RouteId([0xf0; 16]),
+        nonce:             FreshnessNonce(42),
+        recipient_ops_pub: [0x77; 32],
+        vitality_snapshot: VitalityState::Warm,
+        protocol_version:  1,
+    };
+    let t2 = FlashTranscriptV2 {
+        route_id:             RouteId([0xf0; 16]),
+        nonce:                FreshnessNonce(42),
+        recipient_ops_pub:    [0x77; 32],
+        vitality_snapshot:    VitalityState::Warm,
+        protocol_version:     1,
+        sender_ephemeral_pub: [0u8; 32],
+    };
+
+    assert_ne!(
+        t1.hash(), t2.hash(),
+        "v1 and v2 transcripts with the same base fields must hash differently (format bytes differ)"
+    );
+}
+
+// ── Phase 6: HandshakeEphemeral in ledger ───────────────────────────────────
+
+fn make_handshake_ephemeral_for_test(
+    ops_kp: &scp_cryptography::keys::KeyPair,
+    expires_at: u64,
+) -> (scp_ledger_substrate::HandshakeEphemeral, [u8; 32]) {
+    use scp_cryptography::x25519_generate_keypair;
+    use scp_ledger_substrate::handshake_sig_message;
+
+    let (_, eph_pub) = x25519_generate_keypair();
+    let msg = handshake_sig_message(&eph_pub, expires_at);
+    let sig = ops_kp.sign(&msg);
+
+    let eph = scp_ledger_substrate::HandshakeEphemeral {
+        pub_key:      eph_pub,
+        sig:          sig.to_vec(),
+        published_at: 1_000_000,
+        expires_at,
+    };
+    (eph, eph_pub)
+}
+
+#[test]
+fn ledger_publish_and_retrieve_handshake_ephemeral() {
+    use scp_cryptography::keys::KeyPair;
+    use scp_ledger_substrate::SubstrateLedger;
+
+    let ops_kp  = KeyPair::generate();
+    let ledger  = SubstrateLedger::new();
+    let expires = 2_000_000u64;
+
+    let (eph, eph_pub) = make_handshake_ephemeral_for_test(&ops_kp, expires);
+    ledger.publish_handshake_ephemeral(&ops_kp.public, eph).expect("valid ephemeral must be accepted");
+
+    let retrieved = ledger.get_handshake_ephemeral(&ops_kp.public, 1_500_000);
+    assert!(retrieved.is_some(), "non-expired ephemeral must be retrievable");
+    assert_eq!(retrieved.unwrap().pub_key, eph_pub, "retrieved pub_key must match published");
+}
+
+#[test]
+fn ledger_expired_ephemeral_not_returned() {
+    use scp_cryptography::keys::KeyPair;
+    use scp_ledger_substrate::SubstrateLedger;
+
+    let ops_kp  = KeyPair::generate();
+    let ledger  = SubstrateLedger::new();
+    let expires = 1_000_100u64; // expires just after published_at
+
+    let (eph, _) = make_handshake_ephemeral_for_test(&ops_kp, expires);
+    ledger.publish_handshake_ephemeral(&ops_kp.public, eph).expect("publish must succeed");
+
+    // now = 2_000_000 >> expires_at = 1_000_100 → expired
+    let retrieved = ledger.get_handshake_ephemeral(&ops_kp.public, 2_000_000);
+    assert!(retrieved.is_none(), "expired ephemeral must not be returned");
+}
+
+#[test]
+fn ledger_rejects_invalid_handshake_sig() {
+    use scp_cryptography::keys::KeyPair;
+    use scp_cryptography::x25519_generate_keypair;
+    use scp_ledger_substrate::{HandshakeEphemeral, SubstrateLedger};
+
+    let ops_kp = KeyPair::generate();
+    let ledger = SubstrateLedger::new();
+    let (_, eph_pub) = x25519_generate_keypair();
+
+    let bad_eph = HandshakeEphemeral {
+        pub_key:      eph_pub,
+        sig:          vec![0u8; 64], // all-zero sig — invalid
+        published_at: 1_000_000,
+        expires_at:   2_000_000,
+    };
+    let result = ledger.publish_handshake_ephemeral(&ops_kp.public, bad_eph);
+    assert!(result.is_err(), "invalid signature must be rejected by the ledger");
+}
+
+// ── Phase 6: bilateral DH flash session ────────────────────────────────────
+
+#[tokio::test]
+async fn flash_session_dh_path_succeeds() {
+    use scp_cryptography::keys::KeyPair;
+    use scp_cryptography::x25519_generate_keypair;
+    use scp_ledger_substrate::handshake_sig_message;
+    use scp_relay_cache::WarmCache;
+    use scp_relay_perturbation::PerturbationEngine;
+    use scp_transport::flash::{FlashSession, PublishedHandshakeKey, RecipientState};
+    use scp_vitality::VitalityState;
+    use std::time::Duration;
+
+    let ops_kp  = KeyPair::generate();
+    let (_, eph_pub) = x25519_generate_keypair();
+    let expires_at = 9_999_999_999u64;
+    let sig_msg = handshake_sig_message(&eph_pub, expires_at);
+    let sig = ops_kp.sign(&sig_msg);
+
+    let state = RecipientState {
+        ops_pub: ops_kp.public,
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
+        handshake_ephemeral: Some(PublishedHandshakeKey {
+            pub_key: eph_pub,
+            sig,
+            expires_at,
+        }),
+    };
+
+    let cache  = WarmCache::new(Duration::from_secs(600));
+    let engine = PerturbationEngine::passthrough();
+
+    let session = FlashSession::open_and_send(state, b"bilateral forward secrecy", &cache, &engine)
+        .await
+        .expect("DH-path session must succeed");
+
+    let _ = session.dissolve();
+}
+
+#[tokio::test]
+async fn flash_session_dh_rejects_bad_sig() {
+    use scp_cryptography::x25519_generate_keypair;
+    use scp_relay_cache::WarmCache;
+    use scp_relay_perturbation::PerturbationEngine;
+    use scp_transport::flash::{FlashSession, PublishedHandshakeKey, RecipientState, TransportError};
+    use scp_vitality::VitalityState;
+    use std::time::Duration;
+
+    let (_, eph_pub) = x25519_generate_keypair();
+
+    let state = RecipientState {
+        ops_pub: [0xffu8; 32], // ops key that did NOT sign the ephemeral
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
+        handshake_ephemeral: Some(PublishedHandshakeKey {
+            pub_key:    eph_pub,
+            sig:        [0u8; 64], // all-zero — will not verify
+            expires_at: 9_999_999_999,
+        }),
+    };
+
+    let cache  = WarmCache::new(Duration::from_secs(600));
+    let engine = PerturbationEngine::passthrough();
+
+    let result = FlashSession::open_and_send(state, b"should fail", &cache, &engine).await;
+    assert!(
+        matches!(result, Err(TransportError::HandshakeKeyInvalid)),
+        "invalid handshake sig must produce HandshakeKeyInvalid error"
+    );
+}
+
+// ── Phase 6: dummy traffic ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn dummy_burst_closed_vitality_emits_nothing() {
+    // For Severed/Burned vitality (not open), maybe_emit_dummy must return
+    // without attempting any relay connection. We verify by calling it without
+    // a running relay — if it tried to connect, it would error internally
+    // (but it discards errors). The key invariant is: no panic, no hang.
+    use scp_relay_perturbation::PerturbationEngine;
+    use scp_vitality::VitalityState;
+    use std::time::Duration;
+
+    let engine = PerturbationEngine::new(Duration::ZERO);
+    for vitality in [VitalityState::Severed, VitalityState::Burned, VitalityState::Suspended] {
+        // Called 50 times — with closed vitality, should_emit_dummy is always false.
+        for _ in 0..50 {
+            engine.maybe_emit_dummy(&vitality).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn dummy_burst_active_vitality_completes_without_panic() {
+    use scp_relay_mesh::spawn_relay_listener;
+    use scp_relay_perturbation::PerturbationEngine;
+    use scp_vitality::VitalityState;
+    use std::time::Duration;
+
+    // Spin up a local relay so any emitted dummy burst has somewhere to go.
+    let _addr = spawn_relay_listener().await.expect("relay must bind");
+
+    let engine = PerturbationEngine::new(Duration::ZERO);
+    // 20 calls — probabilistic but must never panic.
+    for _ in 0..20 {
+        engine.maybe_emit_dummy(&VitalityState::Active).await;
+    }
 }

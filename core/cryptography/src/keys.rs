@@ -51,6 +51,27 @@ impl PublicKey {
     }
 }
 
+/// Raw X25519 Diffie-Hellman shared secret (no KDF applied).
+///
+/// Returns the 32-byte output directly. The caller MUST domain-separate and
+/// derive keys from this output via `scp_derive_key` before any cryptographic
+/// use. Do not use this output directly as a symmetric key.
+pub fn x25519_dh(local_secret: &[u8; 32], remote_public: &[u8; 32]) -> [u8; 32] {
+    let shared = StaticSecret::from(*local_secret)
+        .diffie_hellman(&(*remote_public).into());
+    *shared.as_bytes()
+}
+
+/// Generate a fresh X25519 keypair for use as a session handshake ephemeral.
+///
+/// Returns `(secret_bytes, public_bytes)`. The secret is ephemeral — do not
+/// store it. Do not use this for long-lived identity keys.
+pub fn x25519_generate_keypair() -> ([u8; 32], [u8; 32]) {
+    let secret = StaticSecret::random_from_rng(OsRng);
+    let public = x25519_dalek::PublicKey::from(&secret);
+    (secret.to_bytes(), *public.as_bytes())
+}
+
 impl SessionKey {
     /// Derive an ephemeral session key from a local X25519 secret and remote X25519 public key.
     /// The raw DH shared secret is hashed with BLAKE3 to produce the symmetric key.

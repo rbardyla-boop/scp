@@ -3,7 +3,7 @@ pub mod replay;
 pub mod session;
 pub mod transcript;
 
-pub use flash::{DissolvedProof, FlashSession, FlashSessionLifecycle, RecipientState, TransportError};
+pub use flash::{DissolvedProof, FlashSession, FlashSessionLifecycle, PublishedHandshakeKey, RecipientState, TransportError};
 pub use replay::ReplayWindow;
 pub use session::{FreshnessNonce, RouteId, SessionKey};
-pub use transcript::{FlashTranscript, TransportKeyMaterial};
+pub use transcript::{FlashTranscript, FlashTranscriptV2, TransportKeyMaterial};

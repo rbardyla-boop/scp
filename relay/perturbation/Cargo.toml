@@ -7,3 +7,5 @@ license.workspace = true
 [dependencies]
 tokio.workspace = true
 rand.workspace = true
+scp-relay-mesh.workspace = true
+scp-vitality.workspace = true

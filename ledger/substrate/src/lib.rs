@@ -3,6 +3,31 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
+/// Maximum published handshake ephemerals per operational identity.
+/// Bounded to support multi-device without unbounded accumulation.
+pub const MAX_HANDSHAKE_EPHEMERALS: usize = 8;
+
+/// A published X25519 handshake ephemeral key for a given operational identity.
+///
+/// Signed by the ops key to prove delegation — transport capability is
+/// issued by the identity but not conflated with it. Expires to prevent
+/// accumulation of stale transport-fingerprint material.
+///
+/// This is NOT an identity key. It is delegated transport capability:
+///   root lineage → ops lineage → handshake ephemeral (temporary)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandshakeEphemeral {
+    /// X25519 public key for use in sender-side DH.
+    pub pub_key:      [u8; 32],
+    /// Ed25519 signature by the ops key over `handshake_sig_message(pub_key, expires_at)`.
+    /// Stored as Vec<u8> for serde compatibility (serde does not cover [u8; 64]).
+    pub sig:          Vec<u8>,
+    /// Unix epoch seconds at publication.
+    pub published_at: u64,
+    /// Unix epoch seconds at expiration. Key must be rejected after this time.
+    pub expires_at:   u64,
+}
+
 // ── Public types ────────────────────────────────────────────────────────────
 
 /// Minimal on-chain identity record (public portion only).
@@ -52,6 +77,8 @@ struct LedgerState {
     tunnels: HashMap<[u8; 32], TunnelConsent>,
     /// Revoked tunnel consent hashes
     revoked_tunnels: HashSet<[u8; 32]>,
+    /// ops_pub → published handshake ephemerals (bounded by MAX_HANDSHAKE_EPHEMERALS)
+    handshake_ephemerals: HashMap<[u8; 32], Vec<HandshakeEphemeral>>,
 }
 
 // ── SubstrateLedger ─────────────────────────────────────────────────────────
@@ -193,6 +220,74 @@ impl SubstrateLedger {
         }
     }
 
+    /// Publish a handshake ephemeral for a given operational identity.
+    ///
+    /// `ops_pub` must not be revoked. The `HandshakeEphemeral.sig` must be a
+    /// valid Ed25519 signature by `ops_pub` over
+    /// `handshake_sig_message(eph.pub_key, eph.expires_at)`.
+    ///
+    /// Expired entries are evicted before insertion. If the list is still at
+    /// MAX_HANDSHAKE_EPHEMERALS after eviction, the oldest entry is dropped.
+    pub fn publish_handshake_ephemeral(
+        &self,
+        ops_pub: &[u8; 32],
+        eph: HandshakeEphemeral,
+    ) -> Result<(), LedgerError> {
+        {
+            let st = self.state.read().unwrap();
+            if st.revoked_ops.contains(ops_pub) {
+                return Err(LedgerError::InvalidSignature);
+            }
+        }
+
+        let sig_bytes: [u8; 64] = eph.sig[..]
+            .try_into()
+            .map_err(|_| LedgerError::InvalidSignature)?;
+        let msg = handshake_sig_message(&eph.pub_key, eph.expires_at);
+        if !PublicKey(*ops_pub).verify(&msg, &sig_bytes) {
+            return Err(LedgerError::InvalidSignature);
+        }
+
+        let mut st = self.state.write().unwrap();
+        let list = st.handshake_ephemerals.entry(*ops_pub).or_default();
+
+        // Evict expired entries first.
+        list.retain(|e| e.expires_at > eph.published_at);
+
+        // If still at capacity, drop the oldest (smallest published_at).
+        if list.len() >= MAX_HANDSHAKE_EPHEMERALS {
+            if let Some(oldest_idx) = list
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, e)| e.published_at)
+                .map(|(i, _)| i)
+            {
+                list.remove(oldest_idx);
+            }
+        }
+
+        list.push(eph);
+        Ok(())
+    }
+
+    /// Retrieve the most recently published non-expired handshake ephemeral.
+    ///
+    /// `now` is the current Unix epoch seconds. Returns `None` if no valid
+    /// ephemeral is published for this ops key.
+    pub fn get_handshake_ephemeral(
+        &self,
+        ops_pub: &[u8; 32],
+        now: u64,
+    ) -> Option<HandshakeEphemeral> {
+        let st = self.state.read().unwrap();
+        st.handshake_ephemerals
+            .get(ops_pub)?
+            .iter()
+            .filter(|e| e.expires_at > now)
+            .max_by_key(|e| e.expires_at)
+            .cloned()
+    }
+
     /// Revoke tunnel consent. Either party may revoke unilaterally.
     /// `ops_pub` must be one of the two parties; `ops_sig` covers the consent hash.
     pub fn revoke_tunnel(
@@ -234,6 +329,19 @@ fn rotation_message(old: &[u8; 32], new: &[u8; 32], nonce: u64) -> Vec<u8> {
     msg.extend_from_slice(old);
     msg.extend_from_slice(new);
     msg.extend_from_slice(&nonce.to_le_bytes());
+    msg
+}
+
+/// Canonical signature message for a handshake ephemeral publication (67 bytes).
+///
+/// Format: `b"scp:handshake-ephemeral:v1:" || pub_key || expires_at_le`.
+/// This format is protocol-stable — both publisher (ops key signs) and
+/// verifier (ledger and transport layer check) must use it verbatim.
+pub fn handshake_sig_message(pub_key: &[u8; 32], expires_at: u64) -> [u8; 67] {
+    let mut msg = [0u8; 67];
+    msg[0..27].copy_from_slice(b"scp:handshake-ephemeral:v1:");
+    msg[27..59].copy_from_slice(pub_key);
+    msg[59..67].copy_from_slice(&expires_at.to_le_bytes());
     msg
 }
 
