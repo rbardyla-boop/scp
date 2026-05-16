@@ -9,3 +9,4 @@ tokio.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 snow.workspace = true
+rand.workspace = true

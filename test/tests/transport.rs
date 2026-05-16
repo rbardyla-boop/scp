@@ -251,10 +251,12 @@ fn warm_cache_purge_clears_all() {
 #[tokio::test]
 async fn flash_session_full_lifecycle() {
     use scp_relay_cache::WarmCache;
+    use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::{FlashSession, FlashSessionLifecycle};
     use std::time::Duration;
 
     let cache = WarmCache::new(Duration::from_secs(600));
+    let engine = PerturbationEngine::passthrough();
     let recipient_pub = [7u8; 32];
 
     // Step 1: retrieve state.
@@ -264,7 +266,7 @@ async fn flash_session_full_lifecycle() {
     assert!(state.vitality.is_open(), "simulated recipient must be open");
 
     // Steps 2–4: open session and transmit.
-    let session = FlashSession::open_and_send(state, b"sovereign payload", &cache)
+    let session = FlashSession::open_and_send(state, b"sovereign payload", &cache, &engine)
         .await
         .expect("open_and_send must succeed");
 
@@ -289,11 +291,13 @@ async fn flash_session_full_lifecycle() {
 #[tokio::test]
 async fn flash_session_rejects_closed_vitality() {
     use scp_relay_cache::WarmCache;
+    use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::{FlashSession, RecipientState, TransportError};
     use scp_vitality::VitalityState;
     use std::time::Duration;
 
     let cache = WarmCache::new(Duration::from_secs(600));
+    let engine = PerturbationEngine::passthrough();
 
     for vitality in [VitalityState::Suspended, VitalityState::Severed, VitalityState::Burned] {
         let state = RecipientState {
@@ -301,7 +305,7 @@ async fn flash_session_rejects_closed_vitality() {
             vitality,
             routing_hints: vec![],
         };
-        let result = FlashSession::open_and_send(state, b"blocked payload", &cache).await;
+        let result = FlashSession::open_and_send(state, b"blocked payload", &cache, &engine).await;
         assert!(
             matches!(result, Err(TransportError::VitalityInsufficient(_))),
             "closed vitality state must reject transmission — transport must obey consent state"
@@ -362,12 +366,14 @@ async fn tcp_relay_burst_delivers_and_disconnects() {
 #[tokio::test]
 async fn dissolved_proof_captures_route_id() {
     use scp_relay_cache::WarmCache;
+    use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
     use std::time::Duration;
 
     let cache = WarmCache::new(Duration::from_secs(600));
+    let engine = PerturbationEngine::passthrough();
     let state = FlashSession::retrieve_state(&[9u8; 32]).await.unwrap();
-    let session = FlashSession::open_and_send(state, b"payload", &cache).await.unwrap();
+    let session = FlashSession::open_and_send(state, b"payload", &cache, &engine).await.unwrap();
 
     let expected_route = session.route.0;
     let proof = session.dissolve();
@@ -381,20 +387,24 @@ async fn dissolved_proof_captures_route_id() {
 #[tokio::test]
 async fn dissolved_proof_route_differs_across_sessions() {
     use scp_relay_cache::WarmCache;
+    use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
     use std::time::Duration;
 
     let cache = WarmCache::new(Duration::from_secs(600));
+    let engine = PerturbationEngine::passthrough();
 
     let s1 = FlashSession::open_and_send(
         FlashSession::retrieve_state(&[1u8; 32]).await.unwrap(),
         b"first",
         &cache,
+        &engine,
     ).await.unwrap();
     let s2 = FlashSession::open_and_send(
         FlashSession::retrieve_state(&[2u8; 32]).await.unwrap(),
         b"second",
         &cache,
+        &engine,
     ).await.unwrap();
 
     let p1 = s1.dissolve();
@@ -544,4 +554,153 @@ async fn noise_relay_fresh_identity_per_listener() {
         pub1, pub2,
         "each relay listener must have a distinct Noise static key — no persistent transport identity"
     );
+}
+
+// ── Phase 5: ReplayWindow ───────────────────────────────────────────────────
+
+#[test]
+fn replay_window_accepts_fresh_nonce() {
+    use scp_transport::ReplayWindow;
+
+    let mut w = ReplayWindow::new();
+    assert!(w.check_and_insert(42), "first nonce must be accepted");
+    assert!(w.check_and_insert(99), "second distinct nonce must be accepted");
+    // Window is [36, 99]; nonce 80 is within range and novel.
+    assert!(w.check_and_insert(80), "novel nonce within 64-slot window must be accepted");
+}
+
+#[test]
+fn replay_window_rejects_duplicate() {
+    use scp_transport::ReplayWindow;
+
+    let mut w = ReplayWindow::new();
+    assert!(w.check_and_insert(100));
+    assert!(!w.check_and_insert(100), "duplicate nonce must be rejected as replay");
+}
+
+#[test]
+fn replay_window_rejects_stale() {
+    use scp_transport::ReplayWindow;
+
+    let mut w = ReplayWindow::new();
+    // Advance window well past nonce 1 so it becomes stale.
+    assert!(w.check_and_insert(1));
+    assert!(w.check_and_insert(100)); // advances window by 99
+    assert!(!w.check_and_insert(1), "nonce older than 64 positions must be rejected as stale");
+}
+
+#[test]
+fn replay_window_handles_out_of_order_within_window() {
+    use scp_transport::ReplayWindow;
+
+    let mut w = ReplayWindow::new();
+    // Accept nonces out of order within the 64-slot window.
+    assert!(w.check_and_insert(50));
+    assert!(w.check_and_insert(10));   // below max_seen but within window [0, 50]
+    assert!(w.check_and_insert(63));   // advances window to [0, 63]
+    assert!(!w.check_and_insert(10),   "nonce seen before window advanced must be rejected");
+    assert!(w.check_and_insert(11));   // novel, still in window
+    assert!(w.check_and_insert(49));   // novel, still in window
+    assert!(!w.check_and_insert(50),   "nonce 50 was the first accepted — must be rejected as replay");
+}
+
+#[test]
+fn replay_window_full_advance_clears_history() {
+    use scp_transport::ReplayWindow;
+
+    let mut w = ReplayWindow::new();
+    assert!(w.check_and_insert(0));
+    // Advance by exactly 64 — old history is cleared.
+    assert!(w.check_and_insert(64));
+    // Nonce 0 is now outside the window; it's stale, not a replay detection.
+    assert!(!w.check_and_insert(0), "stale nonce after full window advance must be rejected");
+}
+
+// ── Phase 5: PerturbationEngine ────────────────────────────────────────────
+
+#[test]
+fn perturbation_normalizes_to_bucket() {
+    use scp_relay_perturbation::{PerturbationEngine, MIN_PAYLOAD_BUCKET};
+    use std::time::Duration;
+
+    let engine = PerturbationEngine::new(Duration::ZERO);
+
+    // Empty payload → one full bucket.
+    let out = engine.normalize_payload(&[]);
+    assert_eq!(out.len(), MIN_PAYLOAD_BUCKET, "empty payload must be padded to one bucket");
+
+    // Payload of exactly one bucket → no padding.
+    let exact = vec![0xabu8; MIN_PAYLOAD_BUCKET];
+    let out = engine.normalize_payload(&exact);
+    assert_eq!(out.len(), MIN_PAYLOAD_BUCKET, "exact-bucket payload must not be padded");
+
+    // One byte over → two buckets.
+    let over = vec![0u8; MIN_PAYLOAD_BUCKET + 1];
+    let out = engine.normalize_payload(&over);
+    assert_eq!(out.len(), MIN_PAYLOAD_BUCKET * 2, "payload just over bucket must reach two buckets");
+
+    // Original content must be preserved at the front.
+    let payload = b"sovereign";
+    let out = engine.normalize_payload(payload);
+    assert_eq!(&out[..payload.len()], payload, "normalization must preserve original content");
+    assert!(out[payload.len()..].iter().all(|&b| b == 0), "padding must be zero bytes");
+}
+
+#[test]
+fn perturbation_jitter_within_bounds() {
+    use scp_relay_perturbation::{PerturbationEngine, MAX_JITTER_MS};
+    use std::time::Duration;
+
+    let max = Duration::from_millis(MAX_JITTER_MS);
+    let engine = PerturbationEngine::new(max);
+
+    // Sample many times; every result must be ≤ max_jitter.
+    for _ in 0..200 {
+        let d = engine.jitter_delay();
+        assert!(d <= max, "jitter must never exceed MAX_JITTER_MS");
+    }
+}
+
+#[test]
+fn perturbation_passthrough_is_zero_jitter() {
+    use scp_relay_perturbation::PerturbationEngine;
+    use std::time::Duration;
+
+    let engine = PerturbationEngine::passthrough();
+    for _ in 0..20 {
+        assert_eq!(engine.jitter_delay(), Duration::ZERO, "passthrough must always return zero delay");
+    }
+}
+
+// ── Phase 5: BootstrapConfig relay selection ────────────────────────────────
+
+#[tokio::test]
+async fn bootstrap_discover_relays_returns_nonempty() {
+    use scp_relay_mesh::discover_relays;
+
+    let relays = discover_relays().await.expect("discover_relays must succeed");
+    assert!(!relays.is_empty(), "bootstrap must return at least one relay");
+}
+
+#[test]
+fn bootstrap_shuffled_relays_preserves_count() {
+    use scp_relay_mesh::bootstrap::BootstrapConfig;
+    use scp_relay_mesh::RelayNode;
+
+    let nodes: Vec<RelayNode> = (0u8..4).map(|i| RelayNode {
+        id: [i; 16],
+        endpoint: format!("local://node-{}", i),
+    }).collect();
+
+    let cfg = BootstrapConfig::with_relays(nodes.clone());
+    let shuffled = cfg.shuffled_relays();
+
+    assert_eq!(shuffled.len(), nodes.len(), "shuffle must preserve relay count");
+
+    // All original ids must be present (order may differ).
+    let mut orig_ids: Vec<[u8;16]> = nodes.iter().map(|n| n.id).collect();
+    let mut shuf_ids: Vec<[u8;16]> = shuffled.iter().map(|n| n.id).collect();
+    orig_ids.sort();
+    shuf_ids.sort();
+    assert_eq!(orig_ids, shuf_ids, "shuffle must not lose or duplicate relays");
 }

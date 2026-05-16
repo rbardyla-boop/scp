@@ -5,6 +5,7 @@ use scp_cryptography::{scp_derive_key, DomainLabel};
 use scp_cryptography::keys::SessionKey as CryptoSessionKey;
 use scp_relay_cache::WarmCache;
 use scp_relay_mesh::{discover_relays, route_burst};
+use scp_relay_perturbation::PerturbationEngine;
 use scp_vitality::VitalityState;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -54,10 +55,22 @@ impl FlashSession {
     ///
     /// Phase 5: replace ephemeral_seed with X25519 DH output against the
     /// recipient's published ephemeral key for true contributory forward secrecy.
+    /// Steps 2–4: generate ephemeral session, perturb, transmit burst, retain in warm cache.
+    ///
+    /// Perturbation pipeline (Phase 5 invariant — order must not change):
+    ///   1. encrypt payload
+    ///   2. normalize (pad to bucket boundary)
+    ///   3. jitter (bounded random delay)
+    ///   4. relay selection
+    ///   5. transmit
+    ///
+    /// Perturbation precedes relay selection so that relay-selection timing is
+    /// not observable as metadata.
     pub async fn open_and_send(
         state: RecipientState,
         payload: &[u8],
         cache: &WarmCache,
+        engine: &PerturbationEngine,
     ) -> Result<FlashSession, TransportError> {
         if !state.vitality.is_open() {
             return Err(TransportError::VitalityInsufficient(state.vitality));
@@ -86,13 +99,22 @@ impl FlashSession {
 
         let session_key = SessionKey(scp_derive_key(DomainLabel::Transport, &key_material.as_bytes()));
 
-        // Step 3: encrypt payload and route through relay mesh.
+        // Step 3: encrypt payload.
         // CryptoSessionKey gets a copy of key bytes; zeroized when it drops after encrypt.
         let crypto_sk = CryptoSessionKey(session_key.0);
         let (ciphertext, _enc_nonce) = crypto_sk.encrypt(payload);
 
+        // Step 3a: normalize payload size (perturbation, Phase 5).
+        // Pads to bucket boundary to remove exact-length signals.
+        let normalized = engine.normalize_payload(&ciphertext);
+
+        // Step 3b: timing jitter (perturbation, Phase 5).
+        // Jitter precedes relay selection — relay-selection timing must not be observable.
+        tokio::time::sleep(engine.jitter_delay()).await;
+
+        // Step 3c: relay selection and transmission.
         let relays = discover_relays().await.map_err(|_| TransportError::RoutingFailed)?;
-        route_burst(ciphertext, relays).await.map_err(|_| TransportError::TransmissionFailed)?;
+        route_burst(normalized, relays).await.map_err(|_| TransportError::TransmissionFailed)?;
 
         // Step 4: retain warm cache entry (10 min default TTL; spec §7.2 range: 5–15 min).
         cache.retain(&route.0, &session_key.0);

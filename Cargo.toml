@@ -54,5 +54,6 @@ scp-identity     = { path = "core/identity" }
 scp-vitality     = { path = "core/vitality" }
 scp-transport    = { path = "core/transport" }
 scp-recovery     = { path = "core/recovery" }
-scp-relay-mesh   = { path = "relay/mesh" }
-scp-relay-cache  = { path = "relay/cache" }
+scp-relay-mesh         = { path = "relay/mesh" }
+scp-relay-cache        = { path = "relay/cache" }
+scp-relay-perturbation = { path = "relay/perturbation" }

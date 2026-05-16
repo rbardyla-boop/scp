@@ -30,8 +30,9 @@ pub struct RouteId(pub [u8; 16]);
 
 /// Replay-prevention nonce bound to a single burst transmission.
 ///
-/// Phase 3/4: add replay window tracking and duplicate burst rejection once
-/// async relay delivery and relay buffering are in place.
+/// ReplayWindow (Phase 5) enforces duplicate rejection on the receive path.
+/// Each nonce is generated from OsRng — not monotonic, so no clock dependency
+/// or sequence-number leak into transport metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FreshnessNonce(pub u64);
 

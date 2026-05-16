@@ -1,3 +1,6 @@
+pub mod bootstrap;
+
+use bootstrap::BootstrapConfig;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
@@ -255,13 +258,12 @@ pub async fn route_burst(
 
 /// Discover available relay nodes from the mesh.
 ///
-/// Phase 4: returns a single synthetic local relay for simulation.
-/// Phase 5: replace with real libp2p mDNS / DHT peer discovery.
+/// Phase 5: returns the local bootstrap list in randomized order — no
+/// sticky affinity, no preferred-relay memory. Caller routes through
+/// the first entry, achieving effective random relay selection.
+/// Phase 6+: replace with DHT/mDNS peer discovery.
 pub async fn discover_relays() -> Result<Vec<RelayNode>, MeshError> {
-    Ok(vec![RelayNode {
-        id: [0u8; 16],
-        endpoint: "local://loopback".to_string(),
-    }])
+    Ok(BootstrapConfig::local_only().shuffled_relays())
 }
 
 /// Spawn a plain TCP blind relay listener for testing (Phase 3).
