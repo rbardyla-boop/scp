@@ -42,6 +42,9 @@ serde_cbor = "0.11"
 # Error handling
 thiserror = "1"
 
+# Noise Protocol Framework
+snow = "0.9"
+
 # Identity
 uuid = { version = "1", features = ["v4"] }
 

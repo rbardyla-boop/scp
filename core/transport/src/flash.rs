@@ -1,6 +1,8 @@
 use crate::session::{FreshnessNonce, RouteId, SessionKey};
+use crate::transcript::{FlashTranscript, TransportKeyMaterial};
 use rand_core::{OsRng, RngCore};
-use scp_cryptography::keys::{hash, SessionKey as CryptoSessionKey};
+use scp_cryptography::{scp_derive_key, DomainLabel};
+use scp_cryptography::keys::SessionKey as CryptoSessionKey;
 use scp_relay_cache::WarmCache;
 use scp_relay_mesh::{discover_relays, route_burst};
 use scp_vitality::VitalityState;
@@ -29,7 +31,7 @@ pub struct FlashSession {
 impl FlashSession {
     /// Step 1: retrieve recipient state and routing hints.
     ///
-    /// Phase 2: returns simulated Active state without a real ledger lookup.
+    /// Phase 2–4: returns simulated Active state without a real ledger lookup.
     /// Phase 8: replace with real state layer query for vitality + routing hints.
     pub async fn retrieve_state(recipient_ops_pub: &[u8; 32]) -> Result<RecipientState, TransportError> {
         Ok(RecipientState {
@@ -41,10 +43,17 @@ impl FlashSession {
 
     /// Steps 2–4: generate ephemeral session, transmit burst, retain in warm cache.
     ///
-    /// Phase 2 key derivation: BLAKE3(random ephemeral bytes).
-    /// Phase 3+: replace with X25519 ECDH over published ephemeral keys, then
-    ///   HKDF(dh_output, route_id, protocol_version, transcript_hash)
-    ///   to prevent cross-context reuse and relay confusion.
+    /// Phase 4 key derivation:
+    ///   session_key = scp_derive_key(
+    ///     DomainLabel::Transport,
+    ///     ephemeral_seed || transcript_hash || recipient_ops_pub
+    ///   )
+    ///
+    /// The ephemeral_seed provides forward secrecy; the transcript_hash binds
+    /// the key to its exact (route, nonce, recipient, vitality) context.
+    ///
+    /// Phase 5: replace ephemeral_seed with X25519 DH output against the
+    /// recipient's published ephemeral key for true contributory forward secrecy.
     pub async fn open_and_send(
         state: RecipientState,
         payload: &[u8],
@@ -55,14 +64,30 @@ impl FlashSession {
         }
 
         // Step 2: generate ephemeral session material.
-        let mut eph_bytes = [0u8; 32];
-        OsRng.fill_bytes(&mut eph_bytes);
-        let session_key = SessionKey(hash(&eph_bytes));
         let route = RouteId::generate();
         let nonce = FreshnessNonce::generate();
 
+        let mut ephemeral_seed = [0u8; 32];
+        OsRng.fill_bytes(&mut ephemeral_seed);
+
+        let transcript = FlashTranscript {
+            route_id:          route.clone(),
+            nonce:             nonce.clone(),
+            recipient_ops_pub: state.ops_pub,
+            vitality_snapshot: state.vitality.clone(),
+            protocol_version:  1,
+        };
+
+        let key_material = TransportKeyMaterial {
+            ephemeral_seed,
+            transcript_hash:   transcript.hash(),
+            recipient_binding: state.ops_pub,
+        };
+
+        let session_key = SessionKey(scp_derive_key(DomainLabel::Transport, &key_material.as_bytes()));
+
         // Step 3: encrypt payload and route through relay mesh.
-        // CryptoSessionKey gets a copy of key bytes; zeroized when dropped after encrypt.
+        // CryptoSessionKey gets a copy of key bytes; zeroized when it drops after encrypt.
         let crypto_sk = CryptoSessionKey(session_key.0);
         let (ciphertext, _enc_nonce) = crypto_sk.encrypt(payload);
 

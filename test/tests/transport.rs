@@ -405,3 +405,143 @@ async fn dissolved_proof_route_differs_across_sessions() {
         "each dissolved session must have a distinct route ID — routes must never be reused"
     );
 }
+
+// ── Phase 4: FlashTranscript ────────────────────────────────────────────────
+
+#[test]
+fn transcript_hash_is_route_bound() {
+    use scp_transport::transcript::FlashTranscript;
+    use scp_transport::session::{FreshnessNonce, RouteId};
+    use scp_vitality::VitalityState;
+
+    let base = FlashTranscript {
+        route_id:          RouteId([0x01; 16]),
+        nonce:             FreshnessNonce(0xdeadbeef),
+        recipient_ops_pub: [0xaa; 32],
+        vitality_snapshot: VitalityState::Active,
+        protocol_version:  1,
+    };
+    let different_route = FlashTranscript {
+        route_id: RouteId([0x02; 16]),
+        ..FlashTranscript {
+            route_id:          RouteId([0x02; 16]),
+            nonce:             FreshnessNonce(0xdeadbeef),
+            recipient_ops_pub: [0xaa; 32],
+            vitality_snapshot: VitalityState::Active,
+            protocol_version:  1,
+        }
+    };
+    assert_ne!(
+        base.hash(), different_route.hash(),
+        "transcript hash must differ when route_id differs"
+    );
+}
+
+#[test]
+fn transcript_hash_is_nonce_bound() {
+    use scp_transport::transcript::FlashTranscript;
+    use scp_transport::session::{FreshnessNonce, RouteId};
+    use scp_vitality::VitalityState;
+
+    let t1 = FlashTranscript {
+        route_id:          RouteId([0x01; 16]),
+        nonce:             FreshnessNonce(1000),
+        recipient_ops_pub: [0xbb; 32],
+        vitality_snapshot: VitalityState::Active,
+        protocol_version:  1,
+    };
+    let t2 = FlashTranscript {
+        route_id:          RouteId([0x01; 16]),
+        nonce:             FreshnessNonce(1001),  // differs by one
+        recipient_ops_pub: [0xbb; 32],
+        vitality_snapshot: VitalityState::Active,
+        protocol_version:  1,
+    };
+    assert_ne!(t1.hash(), t2.hash(), "transcript hash must differ when nonce differs");
+}
+
+#[test]
+fn transcript_serialization_is_stable() {
+    use scp_transport::transcript::FlashTranscript;
+    use scp_transport::session::{FreshnessNonce, RouteId};
+    use scp_vitality::VitalityState;
+
+    // Identical construction must always produce identical hashes — field order,
+    // byte encoding, and domain must never drift silently.
+    let t1 = FlashTranscript {
+        route_id:          RouteId([0x42; 16]),
+        nonce:             FreshnessNonce(0xdeadbeefcafe1234),
+        recipient_ops_pub: [0xab; 32],
+        vitality_snapshot: VitalityState::Active,
+        protocol_version:  1,
+    };
+    let t2 = FlashTranscript {
+        route_id:          RouteId([0x42; 16]),
+        nonce:             FreshnessNonce(0xdeadbeefcafe1234),
+        recipient_ops_pub: [0xab; 32],
+        vitality_snapshot: VitalityState::Active,
+        protocol_version:  1,
+    };
+    assert_eq!(t1.hash(), t2.hash(), "identical transcripts must always produce identical hashes");
+    assert_ne!(t1.hash(), [0u8; 32], "transcript hash must be non-zero");
+}
+
+#[test]
+fn session_key_is_transcript_bound() {
+    use scp_transport::transcript::{FlashTranscript, TransportKeyMaterial};
+    use scp_transport::session::{FreshnessNonce, RouteId};
+    use scp_cryptography::{DomainLabel, scp_derive_key};
+    use scp_vitality::VitalityState;
+    use rand_core::{OsRng, RngCore};
+
+    let mut seed = [0u8; 32];
+    OsRng.fill_bytes(&mut seed);
+    let ops_pub = [0x55u8; 32];
+
+    let make_key = |nonce: u64| {
+        let t = FlashTranscript {
+            route_id:          RouteId([0xf0; 16]),
+            nonce:             FreshnessNonce(nonce),
+            recipient_ops_pub: ops_pub,
+            vitality_snapshot: VitalityState::Warm,
+            protocol_version:  1,
+        };
+        let km = TransportKeyMaterial {
+            ephemeral_seed:    seed,
+            transcript_hash:   t.hash(),
+            recipient_binding: ops_pub,
+        };
+        scp_derive_key(DomainLabel::Transport, &km.as_bytes())
+    };
+
+    let key_a = make_key(100);
+    let key_b = make_key(101);
+
+    assert_ne!(key_a, key_b, "different nonces must produce different session keys");
+}
+
+// ── Phase 4: Noise relay ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn noise_relay_burst_delivers_and_disconnects() {
+    use scp_relay_mesh::{spawn_noise_relay_listener, RelayNode, route_burst};
+
+    let (addr, _relay_pub) = spawn_noise_relay_listener().await.expect("noise relay must bind");
+    let relay = RelayNode { id: [2u8; 16], endpoint: format!("noise://{}", addr) };
+
+    let result = route_burst(b"noise-encrypted sovereign burst".to_vec(), vec![relay]).await;
+    assert!(result.is_ok(), "Noise-encrypted relay must accept, decrypt, and ACK the burst");
+}
+
+#[tokio::test]
+async fn noise_relay_fresh_identity_per_listener() {
+    use scp_relay_mesh::spawn_noise_relay_listener;
+
+    let (_addr1, pub1) = spawn_noise_relay_listener().await.expect("first relay must bind");
+    let (_addr2, pub2) = spawn_noise_relay_listener().await.expect("second relay must bind");
+
+    assert_ne!(
+        pub1, pub2,
+        "each relay listener must have a distinct Noise static key — no persistent transport identity"
+    );
+}
