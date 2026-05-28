@@ -1796,8 +1796,11 @@ fn sim_s34_liveness_failures_elevate_kappa() {
         }
     }
 
-    // Run 200 more epochs — selection concentrates on the sole live provider.
-    for _ in 0..200 {
+    // Run 400 more epochs — selection concentrates on the sole live provider.
+    // 400 epochs gives provider 0 ~450/600 = 75% of selections → κ ≈ 0.40,
+    // providing reliable separation from the baseline+0.2 threshold (~0.21).
+    // 200 epochs was insufficient: expected κ ≈ 0.22 sat too close to the threshold.
+    for _ in 0..400 {
         sim.run_epoch(1);
     }
     let post_failure_kappa = sim.last_kappa();
@@ -1807,9 +1810,8 @@ fn sim_s34_liveness_failures_elevate_kappa() {
         "§S34: κ must rise substantially after 3/4 providers die; \
          baseline={baseline_kappa:.4} post_failure={post_failure_kappa:.4}"
     );
-    // With 200 baseline samples + 200 failure-period samples, the accumulated
-    // selection history dilutes the concentration somewhat. The expected κ is ~0.22
-    // (provider 0 accrues 250 of 400 total appearances → rate 0.625 → κ ≈ 0.22).
+    // With 200 baseline samples + 400 failure-period samples, provider 0 accrues
+    // ~450 of 600 total appearances → rate 0.75 → κ ≈ 0.40.
     // The meaningful invariant is that κ exceeds a meaningful threshold above zero.
     assert!(
         post_failure_kappa > 0.15,
@@ -2923,9 +2925,10 @@ fn sim_s49_on_rotation_freshness_vs_never_under_silent_failure() {
         }
     }
 
-    // Snapshot both pools.
-    sim_never.run_epoch(10);
-    sim_onrot.run_epoch(10);
+    // Snapshot both pools. Use 1000 selection samples so κ converges reliably
+    // below 0.05 (57–60 samples was insufficient given empirical variance).
+    sim_never.run_epoch(1000);
+    sim_onrot.run_epoch(1000);
 
     let never_last  = sim_never.trace.last().unwrap();
     let onrot_last  = sim_onrot.trace.last().unwrap();
