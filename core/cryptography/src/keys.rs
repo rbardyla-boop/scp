@@ -67,7 +67,12 @@ pub fn x25519_dh(local_secret: &[u8; 32], remote_public: &[u8; 32]) -> [u8; 32] 
 /// Returns `(secret_bytes, public_bytes)`. The secret is ephemeral — do not
 /// store it. Do not use this for long-lived identity keys.
 pub fn x25519_generate_keypair() -> ([u8; 32], [u8; 32]) {
-    let secret = StaticSecret::random_from_rng(OsRng);
+    x25519_generate_keypair_with_rng(&mut OsRng)
+}
+
+/// RNG-injectable variant of `x25519_generate_keypair` for deterministic testing.
+pub fn x25519_generate_keypair_with_rng<R: rand_core::CryptoRng + RngCore>(rng: &mut R) -> ([u8; 32], [u8; 32]) {
+    let secret = StaticSecret::random_from_rng(rng);
     let public = x25519_dalek::PublicKey::from(&secret);
     (secret.to_bytes(), *public.as_bytes())
 }

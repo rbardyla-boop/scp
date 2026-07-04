@@ -253,6 +253,7 @@ async fn flash_session_full_lifecycle() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::{FlashSession, FlashSessionLifecycle};
+    use scp_transport::StubStateProvider;
     use std::time::Duration;
 
     let cache = WarmCache::new(Duration::from_secs(600));
@@ -260,7 +261,7 @@ async fn flash_session_full_lifecycle() {
     let recipient_pub = [7u8; 32];
 
     // Step 1: retrieve state.
-    let state = FlashSession::retrieve_state(&recipient_pub)
+    let state = FlashSession::retrieve_state(&StubStateProvider, &recipient_pub)
         .await
         .expect("retrieve_state must succeed");
     assert!(state.vitality.is_open(), "simulated recipient must be open");
@@ -369,11 +370,12 @@ async fn dissolved_proof_captures_route_id() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
     use std::time::Duration;
 
     let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
-    let state = FlashSession::retrieve_state(&[9u8; 32]).await.unwrap();
+    let state = FlashSession::retrieve_state(&StubStateProvider, &[9u8; 32]).await.unwrap();
     let session = FlashSession::open_and_send(state, b"payload", &cache, &engine).await.unwrap();
 
     let expected_route = session.route.0;
@@ -390,19 +392,20 @@ async fn dissolved_proof_route_differs_across_sessions() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
     use std::time::Duration;
 
     let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let s1 = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&[1u8; 32]).await.unwrap(),
+        FlashSession::retrieve_state(&StubStateProvider, &[1u8; 32]).await.unwrap(),
         b"first",
         &cache,
         &engine,
     ).await.unwrap();
     let s2 = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&[2u8; 32]).await.unwrap(),
+        FlashSession::retrieve_state(&StubStateProvider, &[2u8; 32]).await.unwrap(),
         b"second",
         &cache,
         &engine,
@@ -983,4 +986,123 @@ async fn dummy_burst_active_vitality_completes_without_panic() {
     for _ in 0..20 {
         engine.maybe_emit_dummy(&VitalityState::Active).await;
     }
+}
+
+// ── Phase 8: State Layer Integration ─────────────────────────────────────────
+//
+// These tests exercise the full retrieve_state() → open_and_send() path using
+// a real SubstrateLedger. They verify that:
+//   - An empty ledger produces the v1 (OsRng seed) path
+//   - A published ephemeral produces the v2 (bilateral DH) path
+//   - A revoked ops key is rejected before any session is opened
+//   - An expired ephemeral is filtered by the ledger, falling back to v1
+
+#[tokio::test]
+async fn ledger_state_provider_empty_ledger_gives_v1_path() {
+    use scp_ledger_substrate::SubstrateLedger;
+    use scp_transport::flash::FlashSession;
+
+    let ledger = SubstrateLedger::new();
+    let state = FlashSession::retrieve_state(&ledger, &[0x11u8; 32])
+        .await.expect("empty ledger must not error");
+    assert!(state.handshake_ephemeral.is_none(),
+        "no ephemeral published → retrieve_state falls back to v1 (OsRng seed) path");
+    assert!(state.vitality.is_open(),
+        "default vitality must be open");
+}
+
+#[tokio::test]
+async fn ledger_state_provider_published_ephemeral_gives_v2_path() {
+    use scp_cryptography::keys::KeyPair;
+    use scp_cryptography::x25519_generate_keypair;
+    use scp_ledger_substrate::{HandshakeEphemeral, SubstrateLedger};
+    use scp_relay_cache::WarmCache;
+    use scp_relay_perturbation::PerturbationEngine;
+    use scp_transport::flash::FlashSession;
+    use scp_wire_format::signing::handshake_sig_message;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    let ledger  = SubstrateLedger::new();
+    let ops_kp  = KeyPair::generate();
+    let (_, eph_pub) = x25519_generate_keypair();
+    let expires_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH).unwrap().as_secs() + 3600;
+
+    let sig_msg = handshake_sig_message(&eph_pub, expires_at);
+    let sig     = ops_kp.sign(&sig_msg);
+
+    ledger.publish_handshake_ephemeral(
+        &ops_kp.public,
+        HandshakeEphemeral { pub_key: eph_pub, sig: sig.to_vec(), published_at: 0, expires_at },
+    ).expect("publish must succeed for non-revoked key");
+
+    let state = FlashSession::retrieve_state(&ledger, &ops_kp.public)
+        .await.expect("published ephemeral must be retrievable");
+    assert!(state.handshake_ephemeral.is_some(),
+        "published ephemeral must populate state → open_and_send will use v2 DH path");
+
+    let cache  = WarmCache::new(Duration::from_secs(600));
+    let engine = PerturbationEngine::passthrough();
+    let session = FlashSession::open_and_send(state, b"v2-integration", &cache, &engine)
+        .await.expect("v2 session must open with published ephemeral");
+    let _ = session.dissolve();
+}
+
+#[tokio::test]
+async fn ledger_state_provider_revoked_ops_key_returns_error() {
+    use scp_cryptography::keys::KeyPair;
+    use scp_ledger_substrate::{LedgerIdentityRecord, SubstrateLedger};
+    use scp_transport::flash::{FlashSession, TransportError};
+    use scp_wire_format::signing::registration_message;
+
+    let ledger   = SubstrateLedger::new();
+    let root_kp  = KeyPair::generate();
+    let ops_kp   = KeyPair::generate();
+
+    let record = LedgerIdentityRecord {
+        k_root_pub:            root_kp.public,
+        k_ops_pub:             ops_kp.public,
+        recovery_policy_hash:  [0u8; 32],
+        continuity_commitment: [0u8; 32],
+    };
+    let reg_msg  = registration_message(&root_kp.public, &ops_kp.public, &[0u8; 32]);
+    let root_sig = root_kp.sign(&reg_msg);
+    ledger.register_identity(&record, &root_sig).expect("registration must succeed");
+
+    let revoke_sig = root_kp.sign(&ops_kp.public);
+    ledger.revoke(&ops_kp.public, &revoke_sig).expect("revocation must succeed");
+
+    let result = FlashSession::retrieve_state(&ledger, &ops_kp.public).await;
+    assert!(
+        matches!(result, Err(TransportError::RecipientRevoked)),
+        "revoked ops key must return RecipientRevoked — state layer must not produce \
+         a usable RecipientState for a revoked identity"
+    );
+}
+
+#[tokio::test]
+async fn ledger_state_provider_expired_ephemeral_falls_back_to_v1() {
+    use scp_cryptography::keys::KeyPair;
+    use scp_cryptography::x25519_generate_keypair;
+    use scp_ledger_substrate::{HandshakeEphemeral, SubstrateLedger};
+    use scp_transport::flash::FlashSession;
+    use scp_wire_format::signing::handshake_sig_message;
+
+    let ledger  = SubstrateLedger::new();
+    let ops_kp  = KeyPair::generate();
+    let (_, eph_pub) = x25519_generate_keypair();
+    let expires_at = 1u64; // 1970-01-01 — expired on any real system
+
+    let sig_msg = handshake_sig_message(&eph_pub, expires_at);
+    let sig     = ops_kp.sign(&sig_msg);
+
+    ledger.publish_handshake_ephemeral(
+        &ops_kp.public,
+        HandshakeEphemeral { pub_key: eph_pub, sig: sig.to_vec(), published_at: 0, expires_at },
+    ).expect("ledger accepts publication even for past expiry");
+
+    let state = FlashSession::retrieve_state(&ledger, &ops_kp.public)
+        .await.expect("expired ephemeral must not error — ledger filters it silently");
+    assert!(state.handshake_ephemeral.is_none(),
+        "expired ephemeral must be filtered by ledger → retrieve_state falls back to v1");
 }

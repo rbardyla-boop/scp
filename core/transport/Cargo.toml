@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 scp-wire-format.workspace = true
 scp-ledger-substrate.workspace = true
+blake3.workspace = true
 scp-cryptography.workspace = true
 scp-identity.workspace = true
 scp-vitality.workspace = true
@@ -15,5 +16,6 @@ scp-relay-cache.workspace = true
 scp-relay-perturbation.workspace = true
 tokio.workspace = true
 serde.workspace = true
+serde_cbor.workspace = true
 thiserror.workspace = true
 rand_core.workspace = true

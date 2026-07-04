@@ -198,10 +198,11 @@ async fn session_key_bytes_zeroized_after_dissolve() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
 
     let cache  = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
-    let state  = FlashSession::retrieve_state(&[0x42u8; 32]).await.unwrap();
+    let state  = FlashSession::retrieve_state(&StubStateProvider, &[0x42u8; 32]).await.unwrap();
 
     let session = FlashSession::open_and_send(state, b"fwd-secrecy", &cache, &engine)
         .await.expect("session must open");
@@ -243,17 +244,18 @@ async fn two_sessions_have_independent_keys() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
 
     let cache  = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let s1 = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&[0x01u8; 32]).await.unwrap(),
+        FlashSession::retrieve_state(&StubStateProvider, &[0x01u8; 32]).await.unwrap(),
         b"session-one", &cache, &engine,
     ).await.expect("session 1 must open");
 
     let s2 = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&[0x02u8; 32]).await.unwrap(),
+        FlashSession::retrieve_state(&StubStateProvider, &[0x02u8; 32]).await.unwrap(),
         b"session-two", &cache, &engine,
     ).await.expect("session 2 must open");
 
@@ -269,13 +271,14 @@ async fn route_id_is_not_derivable_from_ops_pub() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
 
     let ops_pub = [0xf0u8; 32];
     let cache   = WarmCache::new(Duration::from_secs(600));
     let engine  = PerturbationEngine::passthrough();
 
     let session = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&ops_pub).await.unwrap(),
+        FlashSession::retrieve_state(&StubStateProvider, &ops_pub).await.unwrap(),
         b"route-test", &cache, &engine,
     ).await.expect("session must open");
 
@@ -603,13 +606,14 @@ async fn session_key_not_derivable_from_ops_pub_and_route_id() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
 
     let ops_pub = [0x99u8; 32];
     let cache   = WarmCache::new(Duration::from_secs(600));
     let engine  = PerturbationEngine::passthrough();
 
     let session = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&ops_pub).await.unwrap(),
+        FlashSession::retrieve_state(&StubStateProvider, &ops_pub).await.unwrap(),
         b"key-derivation-test", &cache, &engine,
     ).await.expect("session must open");
 
@@ -834,6 +838,7 @@ async fn session_keys_distinct_across_20_sessions() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
 
     let cache  = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
@@ -842,7 +847,7 @@ async fn session_keys_distinct_across_20_sessions() {
     for i in 0u8..20 {
         let ops_pub = [i; 32]; // vary recipient to ensure different derivation context
         let session = FlashSession::open_and_send(
-            FlashSession::retrieve_state(&ops_pub).await.unwrap(),
+            FlashSession::retrieve_state(&StubStateProvider, &ops_pub).await.unwrap(),
             b"rng-diversity", &cache, &engine,
         ).await.expect("session must open");
         keys.push(session.session_key.0);

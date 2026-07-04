@@ -1,26 +1,100 @@
 # Trial 1c — Runtime Vitality Oracle Wiring Plan
 
-**Status:** PLAN ONLY — no Rust implementation authorized yet  
+**Status:** IMPLEMENTATION AUTHORIZED — A verdict issued  
 **Date:** 2026-05-28  
 **Predecessor:** `TRIAL_1B_CLOSURE_RECORD.md` (A — TRIAL_1B_CLOSED_AND_BASELINED)  
-**Verdict:** `A — TRIAL_1C_SIMULATOR_RUNTIME_WIRING_SPECIFIED`
+**Verdict:** `A — TRIAL_1C_DETERMINISTIC_SIMULATOR_SEND_PATH_SPECIFIED`
 
 ---
 
-## 1. Objective
+## 0. Why B, Not A
 
-Replace the dormant hardcoded `VitalityState::Active` in `FlashSession::retrieve_state()` with a
-real bilateral consultation inside a clearly scoped simulator entry point. The permitted future
-claim, if implementation is authorized and proven:
+Two blockers prevent authorization. Both are narrow and correctable without
+discarding the accepted design decisions in §1.
 
-> In the SCP simulator runtime path, ordinary corridor send creation automatically consults
-> bilateral vitality evidence and enforces the resulting computed vitality state.
+### Blocker 1 — Mixed time domains inside a single simulated send
 
-This is simulator-runtime wiring only. Production-network readiness is not claimed.
+The plan previously accepted a two-clock table:
+
+| Clock site | Source | Deterministic? |
+|-----------|--------|---------------|
+| `retrieve_state_sim()` expiry check | `ctx.now` | Yes |
+| `retrieve_state_sim()` vitality input | `ctx.now` | Yes |
+| `open_and_send_core()` defense-in-depth expiry | `SystemTime::now()` | **No** |
+
+This is **not acceptable**. Trial 1c must simulate through at least:
+
+```
+T0 + 4_171_664 seconds   ≈ 48.3 days
+```
+
+(the Suspended transition boundary). Handshake ephemerals expire after 3,600 seconds.
+A simulated send at T0 + 48 days cannot succeed under the production wall-clock expiry
+check — the registered ephemeral is long expired by real time.
+
+The deeper problem: one simulated send operation would validate its state against two
+different notions of "now". A test could pass or fail depending on when it happens to
+run. That violates the deterministic simulator boundary proven in Trial 1b.
+
+**Required correction:** Introduce a single `now: u64` parameter through the send core
+so that all time-sensitive checks in one simulated operation share one evaluation clock.
+See §8.3.
+
+### Blocker 2 — `retrieve_state_sim()` alone does not prove send-path wiring
+
+Implementing only `retrieve_state_sim()` proves that a simulator retrieval method
+can compute vitality. It does not prove that the simulator send operation uses that
+method. A caller could still do:
+
+```
+retrieve_state()       // returns hardcoded Active
+open_and_send(...)
+```
+
+and bypass the oracle entirely. The claim:
+
+> In the SCP simulator runtime path, ordinary corridor send creation automatically
+> consults bilateral vitality evidence.
+
+requires a **designated simulator send path** that cannot accidentally bypass vitality
+lookup. See §8.4.
 
 ---
 
-## 2. Source Files Inspected
+## 1. Accepted Architectural Decisions
+
+These decisions are preserved from the original plan review and must not be rolled back:
+
+1. Trial 1c is simulator-runtime wiring only. Production-network readiness is not
+   claimed.
+2. Vitality is addressed by a caller-supplied canonical `consent_hash: [u8; 32]`.
+3. The scenario layer derives that hash from an actual bilateral tunnel consent via the
+   existing ledger path. Transport does not recompute identity relationships.
+4. `VitalityEvidenceStore` is long-lived at scenario/runtime level and is borrowed by
+   the send path as `&VitalityEvidenceStore`.
+5. `StateProvider` is not extended with bilateral vitality semantics.
+6. `i`, `r`, and `p` are explicit simulator scenario controls because no executable
+   runtime sources currently exist.
+7. Production `retrieve_state()` remains untouched and continues to carry the Phase 9
+   oracle deferral comment.
+8. `corridor::receive()` remains unchanged.
+
+---
+
+## 2. Objective
+
+Replace the dormant hardcoded `VitalityState::Active` in `FlashSession::retrieve_state()`
+with a real bilateral consultation inside a clearly scoped simulator entry point. The
+permitted future claim, once implementation is authorized and proven:
+
+> In the SCP simulator runtime path, ordinary corridor send creation automatically
+> consults bilateral vitality evidence and enforces the resulting computed vitality state.
+
+This is simulator-runtime wiring only.
+
+---
+
+## 3. Source Files Inspected
 
 | File | Role |
 |------|------|
@@ -42,9 +116,9 @@ This is simulator-runtime wiring only. Production-network readiness is not claim
 
 ---
 
-## 3. Audit 1 — Current Call Graph
+## 4. Audit 1 — Current Call Graph
 
-### 3.1 The hardcoded `Active` location
+### 4.1 The hardcoded `Active` location
 
 **File:** `core/transport/src/flash.rs:71`
 
@@ -60,7 +134,7 @@ FlashSession::retrieve_state(provider, recipient_ops_pub)
      })
 ```
 
-### 3.2 Downstream enforcement path (already proven by Trial 1a)
+### 4.2 Downstream enforcement path (already proven by Trial 1a)
 
 ```
 FlashSession::open_and_send(state, payload, cache, engine)
@@ -70,14 +144,14 @@ FlashSession::open_and_send(state, payload, cache, engine)
        └─ ... key derivation, encrypt, transmit
 ```
 
-### 3.3 Call sites of `retrieve_state()`
+### 4.3 Call sites of `retrieve_state()`
 
 `retrieve_state()` has no production callers today outside tests. All Trial 1b tests
-bypass it and construct `RecipientState` directly via `make_v2_recipient()` / `make_bare_recipient()`.
-The CLI (`cli/endpoint/src/main.rs`) would be the production call site when Phase 9 arrives, but
-that is out of scope for Trial 1c.
+bypass it and construct `RecipientState` directly via `make_v2_recipient()` /
+`make_bare_recipient()`. The CLI (`cli/endpoint/src/main.rs`) would be the production
+call site when Phase 9 arrives, but that is out of scope for Trial 1c.
 
-### 3.4 Additional hardcoded `Active` in `harness.rs`
+### 4.4 Additional hardcoded `Active` in `harness.rs`
 
 `harness::send_harness_direct()` also hardcodes `VitalityState::Active` at line 188.
 This is an existing dev-harness-only artifact. Trial 1c does not touch it — it is
@@ -85,7 +159,7 @@ outside the ordinary `FlashSession::retrieve_state()` path.
 
 ---
 
-## 4. Audit 2 — Bilateral Identity Availability
+## 5. Audit 2 — Bilateral Identity Availability
 
 ### Questions and answers
 
@@ -122,7 +196,7 @@ into a new `retrieve_state_sim()` function. Do not pass raw ops pubs to transpor
 
 ---
 
-## 5. Audit 3 — Oracle / Store Ownership and Lifetime
+## 6. Audit 3 — Oracle / Store Ownership and Lifetime
 
 ### Constraints
 
@@ -142,58 +216,71 @@ disposable (dissolved after a burst). The store cannot live inside `FlashSession
 
 ### Accepted ownership model
 
-The `VitalityEvidenceStore` is owned by the **test scenario**. It is passed as `&VitalityEvidenceStore`
-to `retrieve_state_sim()` for a read-only query. `retrieve_state_sim()` does not own or
-mutate the store's lifetime.
+The `VitalityEvidenceStore` is owned by the **test scenario**. It is passed as
+`&VitalityEvidenceStore` to `retrieve_state_sim()` for a read-only query.
+`retrieve_state_sim()` does not own or mutate the store's lifetime.
 
 ### Why not extend `StateProvider`?
 
 `StateProvider` is a ledger/key interface (`is_revoked`, `get_handshake_ephemeral`).
-Adding `compute_vitality` to it would cross concerns: the ledger knows about key registration
-and revocation; `VitalityEvidenceStore` knows about reaffirmation timestamps. These are
-independent subsystems. A separate query seam is cleaner and matches the structure
-already used in Trial 1b.
+Adding `compute_vitality` to it would cross concerns: the ledger knows about key
+registration and revocation; `VitalityEvidenceStore` knows about reaffirmation
+timestamps. These are independent subsystems. A separate query seam is cleaner and
+matches the structure already used in Trial 1b.
 
-A `VitalityProvider` trait is not needed for Trial 1c. The concrete `VitalityEvidenceStore`
-is sufficient for the simulator scope.
+A `VitalityProvider` trait is not needed for Trial 1c. The concrete
+`VitalityEvidenceStore` is sufficient for the simulator scope.
 
 ---
 
-## 6. Audit 4 — Deterministic Time Boundary
+## 7. Audit 4 — Deterministic Time Boundary (BLOCKER 1 SCOPE)
 
 ### Current state
 
-`retrieve_state()` calls `SystemTime::now()` internally (line 65) for handshake ephemeral
-expiry validation. `open_and_send_core()` also calls `SystemTime::now()` (line 181) as a
-defense-in-depth re-check.
+`retrieve_state()` calls `SystemTime::now()` internally (line 65) for handshake
+ephemeral expiry validation. `open_and_send_core()` also calls `SystemTime::now()`
+(line 181) as a defense-in-depth re-check.
 
-### Trial 1c seam
+### Why the previous "two clocks accepted" ruling is wrong
 
-`retrieve_state_sim()` uses `ctx.now` (a `u64` Unix seconds value declared in
-`SimVitalityEvaluationContext`) for both:
-1. Handshake ephemeral expiry check (replacing the `SystemTime::now()` call)
-2. Input to `VitalityEvidenceStore::compute_state()`
+Trial 1c must simulate through at least `T0 + 4_171_664 seconds` (≈ 48.3 days).
+Handshake ephemerals are valid for only 3,600 seconds. In any test that advances
+simulated time past the Suspended threshold:
 
-This makes the state-retrieval path fully deterministic. The defense-in-depth expiry
-check in `open_and_send_core()` still uses `SystemTime::now()` — this is acceptable
-because tests set `expires_at = SystemTime::now() + 3600s`, so the check always passes
-within any reasonable test window. No wall-clock sleeps are introduced.
+- `retrieve_state_sim()` will validate the ephemeral as current (using `ctx.now`,
+  set to a value far past the ephemeral's wall-clock registration)
+- `open_and_send_core()` will check the same ephemeral using `SystemTime::now()`,
+  which reflects actual execution time — and the ephemeral was registered during
+  test setup, seconds ago
 
-**Two clocks accepted:**
+The second check would pass only because the ephemeral was registered moments before
+in real execution time, not because the simulated time model is correct. That is not
+a deterministic guarantee; it is accidental success depending on test execution speed.
 
-| Clock site | Source | Deterministic? |
-|-----------|--------|---------------|
-| `retrieve_state_sim()` expiry check | `ctx.now` | Yes |
-| `retrieve_state_sim()` vitality input | `ctx.now` | Yes |
-| `open_and_send_core()` defense-in-depth expiry | `SystemTime::now()` | No (wall-clock) |
+A test that happens to run slowly (CI queue, loaded machine) could publish the
+ephemeral, sleep or yield, and then fail the wall-clock check. More subtly, a test
+that publishes an ephemeral with `expires_at = u64::MAX` to avoid this would be
+lying about expiry semantics, not actually resolving the problem.
 
-The defense-in-depth clock does not affect test determinism: it merely enforces that
-the ephemeral hasn't expired since `retrieve_state_sim()` retrieved it, which is always
-true within a test run.
+**Invariant:** A simulated send must not evaluate one part of its authorization state
+against `ctx.now` and another part against `SystemTime::now()`.
+
+### Required correction
+
+See §8.3 for the required seam design. The short form:
+
+```rust
+open_and_send_core_at(..., now: u64)    // internal — single time parameter
+
+open_and_send_core(...)                  // production wrapper — supplies SystemTime::now()
+open_and_send_sim(...)                   // simulator wrapper — supplies ctx.now
+```
+
+The production function signature is unchanged; no production behavior changes.
 
 ---
 
-## 7. Audit 5 — Runtime Sources for `i`, `r`, `p`
+## 8. Audit 5 — Runtime Sources for `i`, `r`, `p`
 
 ### Definitions (from `core/vitality/src/function.rs`)
 
@@ -203,25 +290,37 @@ true within a test run.
 
 ### Audit table
 
-| Input | Formula meaning | Existing executable source | Existing storage | Safe Trial 1c source | Future production gap |
-|-------|----------------|---------------------------|-----------------|---------------------|-----------------------|
-| `i` | Interaction entropy diversity | **None** | **None** | Declared constant in `SimVitalityEvaluationContext` | Requires an interaction tracking subsystem (sends/receives per window, diversity metric) — does not yet exist |
-| `r` | Reciprocal participation symmetry | **None** | **None** | Declared constant in `SimVitalityEvaluationContext` | Requires bidirectional engagement measurement — does not yet exist |
-| `p` | Relay perturbation pressure | `PerturbationEngine` exists but exposes no `p ∈ [0,1]` getter; it normalizes payloads and adds jitter | **None** | Declared constant in `SimVitalityEvaluationContext` | Requires `PerturbationEngine::pressure()` or equivalent — not implemented |
+| Input | Formula meaning | Existing executable source | Safe Trial 1c source |
+|-------|----------------|---------------------------|---------------------|
+| `i` | Interaction entropy diversity | **None** | Declared constant in `SimVitalityEvaluationContext` |
+| `r` | Reciprocal participation symmetry | **None** | Declared constant in `SimVitalityEvaluationContext` |
+| `p` | Relay perturbation pressure | `PerturbationEngine` exists but exposes no `p ∈ [0,1]` getter | Declared constant in `SimVitalityEvaluationContext` |
 
-**All three inputs have zero existing runtime sources.** In Trial 1c they are
-**explicit declared controls** supplied by the test scenario through `SimVitalityEvaluationContext`.
+All three inputs have zero existing runtime sources. In Trial 1c they are **explicit
+declared controls** supplied by the test scenario through `SimVitalityEvaluationContext`.
 They must never be silently defaulted inside transport code.
 
-Trial 1b used `i = 1.0, r = 1.0, p = 0.0` as isolated scenario controls.
-Trial 1c uses the same values by default in the acceptance tests, and must expose them
-as named fields so future tests can vary them deliberately.
+### Input-range behavior
+
+The plan must state one of the following and implement accordingly:
+
+**Option A — Reject at context construction:**  
+`SimVitalityEvaluationContext::new()` returns `Err` if any of `i`, `r`, `p` falls
+outside `[0.0, 1.0]`.
+
+**Option B — Delegate to existing vitality clamping:**  
+Values outside `[0.0, 1.0]` are passed through to `VitalityFunction::compute()`,
+which clamps them silently. The context constructor does not validate.
+
+Either is acceptable if consistent with existing `VitalityParams` semantics. The
+plan must record the choice explicitly. Do not imply validation while relying on
+clamping, or vice versa.
 
 ---
 
-## 8. Proposed Architecture
+## 9. Proposed Architecture
 
-### 8.1 New type: `SimVitalityEvaluationContext`
+### 9.1 New type: `SimVitalityEvaluationContext`
 
 **Location:** `core/vitality/src/sim_context.rs` (new file)  
 **Re-exported via:** `core/vitality/src/lib.rs`
@@ -234,9 +333,12 @@ as named fields so future tests can vary them deliberately.
 /// interaction data through this type.
 pub struct SimVitalityEvaluationContext {
     /// Pre-computed tunnel consent hash — `tunnel_consent_hash(sender, recipient)`.
-    /// Caller is responsible for bilateral identity assembly.
+    /// Caller is responsible for bilateral identity assembly. Must be derived
+    /// from a real bilateral tunnel consent registered in the ledger; must not
+    /// be an arbitrary [0u8; 32] or fabricated value.
     pub consent_hash: [u8; 32],
     /// Evaluation timestamp (Unix seconds). Deterministic — not SystemTime::now().
+    /// Governs both ephemeral expiry and vitality computation.
     pub now: u64,
     /// Declared interaction entropy control [0.0, 1.0].
     pub i: f64,
@@ -247,7 +349,7 @@ pub struct SimVitalityEvaluationContext {
 }
 ```
 
-### 8.2 New method: `FlashSession::retrieve_state_sim()`
+### 9.2 New method: `FlashSession::retrieve_state_sim()`
 
 **Location:** `core/transport/src/flash.rs` — added as a new `impl FlashSession` method
 
@@ -264,7 +366,6 @@ pub struct SimVitalityEvaluationContext {
 ///      call tunnel_consent_hash().
 ///
 /// SIMULATOR ONLY: ctx.i, ctx.r, ctx.p are declared scenario controls.
-/// Do not call this function with production identity measurements.
 pub async fn retrieve_state_sim(
     provider: &impl StateProvider,
     recipient_ops_pub: &[u8; 32],
@@ -279,49 +380,147 @@ pub async fn retrieve_state_sim(
 3. `vitality = vitality_store.compute_state(ctx.consent_hash, ctx.now, ctx.i, ctx.r, ctx.p)`
 4. Return `Ok(RecipientState { ops_pub, vitality, routing_hints: vec![], handshake_ephemeral })`
 
-The original `retrieve_state()` is **unchanged**. Its `VitalityState::Active` hardcode and
-`// Phase 9: vitality oracle` comment remain intact.
+The original `retrieve_state()` is **unchanged**. Its `VitalityState::Active` hardcode
+and `// Phase 9: vitality oracle` comment remain intact.
 
-### 8.3 New dependency
+### 9.3 Required seam: `open_and_send_core_at()` (Blocker 1 correction)
 
-`scp-vitality` is **already** in `core/transport/Cargo.toml`. No workspace dependency changes.
+**Location:** `core/transport/src/flash.rs`
 
-`SimVitalityEvaluationContext` must be exported from `scp_vitality`. The transport crate
-imports `use scp_vitality::{VitalityEvidenceStore, SimVitalityEvaluationContext}`.
+Extract a private internal function that accepts an explicit `now: u64`:
+
+```rust
+// Internal implementation — one evaluation clock governs all time checks.
+async fn open_and_send_core_at(
+    state: RecipientState,
+    payload: &[u8],
+    cache: &SessionCache,
+    engine: &CryptoEngine,
+    now: u64,
+) -> Result<BurstEnvelope, TransportError>
+```
+
+Provide two callers:
+
+```rust
+// Production path — unchanged external signature.
+pub async fn open_and_send_core(
+    state: RecipientState,
+    payload: &[u8],
+    cache: &SessionCache,
+    engine: &CryptoEngine,
+) -> Result<BurstEnvelope, TransportError> {
+    let now = unix_now(); // SystemTime::now() → u64
+    open_and_send_core_at(state, payload, cache, engine, now).await
+}
+
+// Simulator path — caller supplies deterministic time.
+pub async fn open_and_send_core_sim(
+    state: RecipientState,
+    payload: &[u8],
+    cache: &SessionCache,
+    engine: &CryptoEngine,
+    now: u64,
+) -> Result<BurstEnvelope, TransportError> {
+    open_and_send_core_at(state, payload, cache, engine, now).await
+}
+```
+
+This is a legitimate, narrow refactor. No production behavior changes.
+
+### 9.4 Required: designated simulator send path (Blocker 2 correction)
+
+Trial 1c must introduce `open_and_send_sim()` as the single official simulator send
+workflow. This path cannot accidentally bypass vitality retrieval because it accepts
+the vitality store and context as required parameters:
+
+```rust
+/// Designated SCP simulator send operation.
+///
+/// Automatically consults bilateral vitality evidence before creating an
+/// encrypted burst. Cannot be called without supplying a VitalityEvidenceStore
+/// and SimVitalityEvaluationContext.
+///
+/// Internally:
+///   1. Retrieves ephemeral/session state using ctx.now.
+///   2. Obtains vitality from vitality_store using ctx.consent_hash.
+///   3. Builds RecipientState.
+///   4. Invokes open_and_send_core_at() using the same ctx.now.
+///
+/// SIMULATOR ONLY. Does not replace open_and_send() for production use.
+pub async fn open_and_send_sim(
+    provider: &impl StateProvider,
+    vitality_store: &VitalityEvidenceStore,
+    ctx: &SimVitalityEvaluationContext,
+    recipient_ops_pub: &[u8; 32],
+    payload: &[u8],
+    cache: &SessionCache,
+    engine: &CryptoEngine,
+) -> Result<BurstEnvelope, TransportError>
+```
+
+All Trial 1c acceptance tests proving the wiring claim must enter through
+`open_and_send_sim()`. Direct calls to `open_and_send()` + manual `RecipientState`
+construction do not satisfy the wiring claim.
+
+### 9.5 New dependency
+
+`scp-vitality` is **already** in `core/transport/Cargo.toml`. No workspace dependency
+changes are needed. The transport crate imports
+`use scp_vitality::{VitalityEvidenceStore, SimVitalityEvaluationContext}`.
 
 ---
 
-## 9. Trial 1c Test List
+## 10. Relationship Authenticity Guardrail for Tests
+
+Do not populate `consent_hash` with arbitrary `[u8; 32]` values in acceptance tests.
+
+Each Trial 1c relationship test must:
+
+1. Create or register a real bilateral tunnel consent through the existing ledger path.
+2. Derive the canonical `tunnel_consent_hash(A, B)` from that consent.
+3. Initialize evidence for that specific hash in `VitalityEvidenceStore`.
+4. Pass that hash into `SimVitalityEvaluationContext`.
+
+This preserves the policy statement that vitality belongs to an authorized bilateral
+relationship, not to an arbitrary byte string. Tests T1–T8 are affected; T7 is the
+one test that intentionally leaves evidence uninitialized and must still derive its
+hash from a real consent (then simply skip evidence initialization).
+
+---
+
+## 11. Trial 1c Test List
 
 **File:** `test/tests/trial1c.rs` (new file)
 
-All tests use `retrieve_state_sim()` as the entry point. No test constructs `RecipientState`
-directly — the vitality must flow through `retrieve_state_sim()` to satisfy the claim.
+All wiring-claim tests must enter through `open_and_send_sim()`. No wiring-claim test
+may construct `RecipientState` directly; vitality must flow through the designated
+simulator send path. `consent_hash` in each test must be derived from a real bilateral
+tunnel consent (see §10).
 
 | # | Name (proposed) | What it proves |
 |---|-----------------|----------------|
-| T1 | `runtime_active_relationship_permits_send` | Initialized, freshly reaffirmed bilateral: `retrieve_state_sim()` → Active → `open_and_send()` succeeds |
-| T2 | `runtime_suspended_relationship_blocks_send` | Relationship past Suspended threshold: `retrieve_state_sim()` → Suspended → `VitalityInsufficient` |
-| T3 | `runtime_reaffirmation_restores_send` | Suspended → `record_reaffirmation()` → `retrieve_state_sim()` → Active → `open_and_send()` succeeds again |
-| T4 | `runtime_missing_evidence_fails_closed` | No initialized evidence: `retrieve_state_sim()` → Suspended → `VitalityInsufficient` |
-| T5 | `runtime_relationship_isolation_ab_vs_ac` | AB suspended, AC active; `retrieve_state_sim()` with AB hash rejects; with AC hash permits |
-| T6 | `runtime_send_does_not_refresh_evidence` | After a permitted send, re-evaluate at `now + 578_389s` → Warm, not Active; send did not refresh timestamp |
-| T7 | `retrieve_state_sim_bypasses_hardcoded_active` | Uninitialized evidence + direct call to `retrieve_state()` returns Active; `retrieve_state_sim()` with same provider returns Suspended — proves the sim path consults evidence, not the hardcode |
+| T1 | `runtime_active_relationship_permits_send` | Initialized, freshly reaffirmed bilateral: `open_and_send_sim()` → Active → succeeds |
+| T2 | `runtime_suspended_relationship_blocks_send` | Relationship past Suspended threshold: `open_and_send_sim()` → Suspended → `VitalityInsufficient` |
+| T3 | `runtime_reaffirmation_restores_send` | Suspended → `record_reaffirmation()` → `open_and_send_sim()` → Active → succeeds again |
+| T4 | `runtime_missing_evidence_fails_closed` | No initialized evidence: `open_and_send_sim()` → Suspended → `VitalityInsufficient` |
+| T5 | `runtime_relationship_isolation_ab_vs_ac` | AB suspended, AC active; `open_and_send_sim()` with AB context rejects; with AC context permits |
+| T6 | `runtime_send_does_not_refresh_evidence` | After a permitted send, re-evaluate at `ctx.now + 578_389s` → Warm, not Active; send did not refresh timestamp |
+| T7 | `retrieve_state_sim_bypasses_hardcoded_active` | Uninitialized evidence + direct `retrieve_state()` returns Active; `retrieve_state_sim()` with same provider returns Suspended — proves sim path consults evidence |
 | T8 | `corridor_receive_unaffected` | Receive-path decryption of a prior Active-sent burst succeeds after relationship is Suspended — receive is not vitality-gated |
-| T9 | `scenario_controls_i_r_p_are_explicit` | With `i = 0.3, r = 0.5, p = 0.0`: verify computed state boundary shifts match the formula; declared controls propagate correctly |
+| T9 | `scenario_controls_i_r_p_are_explicit` | With `i = 0.3, r = 0.5, p = 0.0`: verify computed state boundary shifts match the formula; declared controls propagate correctly through `open_and_send_sim()` |
 
 ---
 
-## 10. Exact Future Implementation File List
-
-Changes needed when implementation is authorized:
+## 12. Required Implementation File List (when authorized)
 
 | File | Change | Type |
 |------|--------|------|
-| `core/vitality/src/sim_context.rs` | New file: `SimVitalityEvaluationContext` struct | New |
+| `core/vitality/src/sim_context.rs` | New: `SimVitalityEvaluationContext` struct with input-range behavior per §8 | New |
 | `core/vitality/src/lib.rs` | Add `pub mod sim_context; pub use sim_context::SimVitalityEvaluationContext;` | Modify (2 lines) |
-| `core/transport/src/flash.rs` | Add `retrieve_state_sim()` method (~15 lines) and `use scp_vitality::SimVitalityEvaluationContext;` import | Modify |
-| `test/tests/trial1c.rs` | New file: 9 tests | New |
+| `core/transport/src/flash.rs` | Add `retrieve_state_sim()`, `open_and_send_core_at()`, `open_and_send_core_sim()`, `open_and_send_sim()` | Modify |
+| `test/tests/trial1c.rs` | New: 9 acceptance tests via `open_and_send_sim()` | New |
+| `docs/architecture/CORRIDOR_TRIAL_1C_RUNTIME_VITALITY_WIRING_PLAN.md` | This document — updated with amended design | Updated |
 
 **Files not touched:**
 - `core/transport/src/state.rs` — `StateProvider` unchanged
@@ -332,23 +531,7 @@ Changes needed when implementation is authorized:
 
 ---
 
-## 11. Whether Implementation Can Proceed Without Inventing Unapproved Semantics
-
-**Answer: Yes**, with one required discipline.
-
-The only unapproved inputs are `i`, `r`, and `p`. The plan:
-- Explicitly names all three as **declared scenario controls**
-- Requires them to appear as named fields in `SimVitalityEvaluationContext`, not hidden defaults
-- Prohibits any code path inside transport from silently assigning them
-- Ensures test T9 verifies that different declared values produce correspondingly different outputs
-
-Production use of real `i`, `r`, `p` measurements remains a future gap and is out of scope
-for Trial 1c. The absence of real measurement sources is documented here and must not be
-papered over by choosing convenient unit-valued defaults inside a production function.
-
----
-
-## 12. What Trial 1c Does NOT Claim
+## 13. What Trial 1c Does NOT Claim
 
 - `retrieve_state()` (the original function) is wired — it is not
 - `i`, `r`, `p` are measured at runtime from real interaction data
@@ -359,20 +542,46 @@ papered over by choosing convenient unit-valued defaults inside a production fun
 
 ---
 
-## 13. Verdict
+## 14. Input-Range Behavior Decision — Option A Accepted
+
+**Decision: Option A — reject invalid `i`, `r`, `p` at construction time.**
+
+`SimVitalityEvaluationContext::new()` returns `Err(SimVitalityContextError)` if any
+control value is:
+- less than `0.0`
+- greater than `1.0`
+- `NaN`
+- positive or negative infinity
+
+Valid values are finite and within the inclusive range `[0.0, 1.0]`.
+
+`VitalityFunction::compute()` retains its existing clamping behavior as
+defense-in-depth for the general formula surface. The simulator context validates
+declared scenario inputs before they reach the formula. These are independent layers
+and neither modifies the other.
+
+**Why Option A:** `SimVitalityEvaluationContext` is a declared scenario input, not a
+raw observation pipe. Invalid scenario controls must fail visibly rather than being
+silently normalized. This preserves the invariant:
+> Simulator scenario controls are validated. The underlying vitality formula is not
+> redesigned. Production vitality-input policy remains undefined and unclaimed.
+
+---
+
+## 15. Verdict
 
 ```
-A — TRIAL_1C_SIMULATOR_RUNTIME_WIRING_SPECIFIED
+A — TRIAL_1C_DETERMINISTIC_SIMULATOR_SEND_PATH_SPECIFIED
 ```
 
-All five audits resolved cleanly:
+| Audit | Finding | Status |
+|-------|---------|--------|
+| 1. Call graph | Hardcode at `flash.rs:71`; gate at `flash.rs:166`; no production callers | ✅ Resolved |
+| 2. Bilateral identity | Pre-computed `consent_hash` via context; transport does not call `tunnel_consent_hash()` | ✅ Resolved |
+| 3. Store ownership | Scenario-level; passed as `&VitalityEvidenceStore` borrow; no lifetime contamination | ✅ Resolved |
+| 4. Deterministic time | `open_and_send_core_at(now)` seam unifies all time checks under one clock | ✅ Resolved |
+| 5. i/r/p sources | All three are named declared controls; Option A validation at construction | ✅ Resolved |
+| 6. Send-path wiring | `open_and_send_sim()` designated path requires vitality store and context | ✅ Resolved |
 
-| Audit | Finding | Resolved |
-|-------|---------|---------|
-| 1. Call graph | Hardcode at `flash.rs:71`; gate at `flash.rs:166`; no production callers | ✅ |
-| 2. Bilateral identity | Pre-computed `consent_hash` passed via context; transport does not call `tunnel_consent_hash()` | ✅ |
-| 3. Store ownership | Scenario-level; passed as `&VitalityEvidenceStore` borrow; no lifetime contamination | ✅ |
-| 4. Deterministic time | `ctx.now` used throughout `retrieve_state_sim()`; wall-clock only in defense-in-depth check | ✅ |
-| 5. i/r/p sources | All three absent from production code; all three are named declared controls in `SimVitalityEvaluationContext` | ✅ |
-
-Implementation is authorized to proceed once this plan is accepted.
+Implementation authorized. Proof verdict after passing tests:
+`A — TRIAL_1C_SIMULATOR_RUNTIME_VITALITY_ENFORCEMENT_PROVEN`

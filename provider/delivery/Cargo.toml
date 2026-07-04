@@ -1,0 +1,16 @@
+[package]
+name = "scp-provider-delivery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+scp-provider-pool.workspace = true
+scp-transport.workspace = true
+tokio.workspace = true
+rand_core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+tokio = { version = "1", features = ["test-util"] }

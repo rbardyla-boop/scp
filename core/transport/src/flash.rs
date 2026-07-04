@@ -1,3 +1,4 @@
+use crate::harness::{DevHarnessBurst, vitality_to_byte};
 use crate::session::{FreshnessNonce, RouteId, SessionKey};
 use crate::transcript::{FlashTranscript, FlashTranscriptV2, TransportKeyMaterial};
 use rand_core::{OsRng, RngCore};
@@ -6,7 +7,8 @@ use scp_cryptography::keys::{x25519_dh, x25519_generate_keypair, PublicKey, Sess
 use scp_relay_cache::WarmCache;
 use scp_relay_mesh::{discover_relays, route_burst};
 use scp_relay_perturbation::PerturbationEngine;
-use scp_vitality::VitalityState;
+use scp_vitality::{VitalityEvidenceStore, VitalityState};
+use scp_vitality::SimVitalityEvaluationContext;
 use crate::state::StateProvider;
 use scp_wire_format::signing::handshake_sig_message;
 use serde::{Deserialize, Serialize};
@@ -47,18 +49,62 @@ pub struct PublishedHandshakeKey {
 }
 
 impl FlashSession {
-    /// Step 1: retrieve recipient state and routing hints.
+    /// Step 1: retrieve recipient state from the sovereign state layer.
     ///
-    /// Phase 2–6: returns simulated Active state without a real ledger lookup.
-    /// `handshake_ephemeral` is None — callers that want the DH path supply
-    /// a `RecipientState` with `handshake_ephemeral: Some(...)` directly.
-    /// Phase 8: replace with real state layer query.
-    pub async fn retrieve_state(recipient_ops_pub: &[u8; 32]) -> Result<RecipientState, TransportError> {
+    /// Rejects revoked operational keys immediately. Fetches the most recent
+    /// non-expired handshake ephemeral (if any) to enable the v2 bilateral DH path.
+    ///
+    /// Vitality and routing hints are deferred to Phase 9 (vitality oracle and
+    /// routing discovery). Until then both default to Active / empty.
+    pub async fn retrieve_state(
+        provider: &impl StateProvider,
+        recipient_ops_pub: &[u8; 32],
+    ) -> Result<RecipientState, TransportError> {
+        if provider.is_revoked(recipient_ops_pub) {
+            return Err(TransportError::RecipientRevoked);
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         Ok(RecipientState {
             ops_pub: *recipient_ops_pub,
-            vitality: VitalityState::Active,
+            vitality: VitalityState::Active, // Phase 9: vitality oracle
+            routing_hints: vec![],           // Phase 9: routing discovery
+            handshake_ephemeral: provider.get_handshake_ephemeral(recipient_ops_pub, now),
+        })
+    }
+
+    /// Simulator-runtime retrieve_state with explicit vitality oracle.
+    ///
+    /// SIMULATOR ONLY. Replaces the hardcoded `VitalityState::Active` with a value
+    /// computed from `vitality_store` using the bilateral consent hash and simulated
+    /// time in `ctx`. Uses `ctx.now()` for handshake ephemeral validation — fully
+    /// deterministic, no wall-clock reads.
+    ///
+    /// Does not modify the production `retrieve_state()` path or its Phase 9 deferral.
+    pub async fn retrieve_state_sim(
+        provider: &impl StateProvider,
+        recipient_ops_pub: &[u8; 32],
+        vitality_store: &VitalityEvidenceStore,
+        ctx: &SimVitalityEvaluationContext,
+    ) -> Result<RecipientState, TransportError> {
+        if provider.is_revoked(recipient_ops_pub) {
+            return Err(TransportError::RecipientRevoked);
+        }
+        let handshake_ephemeral = provider.get_handshake_ephemeral(recipient_ops_pub, ctx.now());
+        let vitality = vitality_store.compute_state(
+            ctx.consent_hash(),
+            ctx.now(),
+            ctx.i(),
+            ctx.r(),
+            ctx.p(),
+        );
+        Ok(RecipientState {
+            ops_pub: *recipient_ops_pub,
+            vitality,
             routing_hints: vec![],
-            handshake_ephemeral: None,
+            handshake_ephemeral,
         })
     }
 
@@ -87,6 +133,120 @@ impl FlashSession {
         cache: &WarmCache,
         engine: &PerturbationEngine,
     ) -> Result<FlashSession, TransportError> {
+        let (session, _) = Self::open_and_send_core(state, payload, cache, engine).await?;
+        Ok(session)
+    }
+
+    /// Same as [`open_and_send`] but also returns a [`BurstEnvelope`] containing all
+    /// fields the recipient needs to reconstruct the session key and decrypt.
+    ///
+    /// Requires the v2 bilateral DH path — `state.handshake_ephemeral` must be `Some`.
+    /// Returns [`TransportError::V1PathNotReceivable`] if no handshake ephemeral is present.
+    ///
+    /// This is the entry point for the in-process scenario harness (Trial 0).
+    pub async fn open_and_send_with_envelope(
+        state: RecipientState,
+        payload: &[u8],
+        cache: &WarmCache,
+        engine: &PerturbationEngine,
+    ) -> Result<(FlashSession, crate::corridor::BurstEnvelope), TransportError> {
+        let (session, maybe_env) = Self::open_and_send_core(state, payload, cache, engine).await?;
+        let env = maybe_env.ok_or(TransportError::V1PathNotReceivable)?;
+        Ok((session, env))
+    }
+
+    /// Sender packaging path for the dev harness relay-mailbox flow (Trial 0).
+    ///
+    /// Produces a CBOR-serializable `DevHarnessBurst` containing all fields needed for
+    /// recipient key reconstruction and decryption. For relay delivery the caller
+    /// serializes this struct with `harness::serialize_burst()` and routes it under a
+    /// `DevMailboxId` — the relay sees only the opaque token, not any identity key.
+    ///
+    /// Requires the v2 bilateral DH path — `state.handshake_ephemeral` must be `Some`.
+    /// Returns [`TransportError::V1PathNotReceivable`] if no handshake ephemeral is present.
+    ///
+    /// This method is explicitly harness-only. It does not replace or modify
+    /// [`open_and_send`] or the canonical relay transmission path.
+    pub async fn open_and_package_harness_burst(
+        state: RecipientState,
+        payload: &[u8],
+        cache: &WarmCache,
+        engine: &PerturbationEngine,
+    ) -> Result<(FlashSession, DevHarnessBurst), TransportError> {
+        let (session, maybe_env) = Self::open_and_send_core(state, payload, cache, engine).await?;
+        let env = maybe_env.ok_or(TransportError::V1PathNotReceivable)?;
+        let burst = DevHarnessBurst {
+            sender_ephemeral_pub: env.sender_ephemeral_pub,
+            route_id:             env.route_id.0,
+            freshness_nonce:      env.nonce.0,
+            vitality_byte:        vitality_to_byte(&env.vitality_snapshot),
+            enc_nonce:            env.enc_nonce,
+            ciphertext:           env.ciphertext,
+        };
+        Ok((session, burst))
+    }
+
+    /// Designated SCP simulator send operation.
+    ///
+    /// SIMULATOR ONLY. Retrieves recipient state through the bilateral vitality oracle
+    /// using the supplied `vitality_store` and `ctx`, then invokes the send core under
+    /// a single deterministic evaluation clock (`ctx.now()`). Cannot be called without
+    /// a `VitalityEvidenceStore` and `SimVitalityEvaluationContext` — vitality bypass
+    /// through this path is structurally prevented.
+    ///
+    /// Requires the v2 bilateral DH path. Returns `TransportError::V1PathNotReceivable`
+    /// if no valid handshake ephemeral is present at `ctx.now()`.
+    ///
+    /// Does not replace or modify [`open_and_send`], [`open_and_send_with_envelope`],
+    /// or any production call site.
+    pub async fn open_and_send_sim(
+        provider: &impl StateProvider,
+        vitality_store: &VitalityEvidenceStore,
+        ctx: &SimVitalityEvaluationContext,
+        recipient_ops_pub: &[u8; 32],
+        payload: &[u8],
+        cache: &WarmCache,
+        engine: &PerturbationEngine,
+    ) -> Result<(FlashSession, crate::corridor::BurstEnvelope), TransportError> {
+        let state = Self::retrieve_state_sim(provider, recipient_ops_pub, vitality_store, ctx).await?;
+        let (session, maybe_env) =
+            Self::open_and_send_core_at(state, payload, cache, engine, ctx.now()).await?;
+        let env = maybe_env.ok_or(TransportError::V1PathNotReceivable)?;
+        Ok((session, env))
+    }
+
+    /// Shared implementation for [`open_and_send`] and [`open_and_send_with_envelope`].
+    ///
+    /// Returns `(FlashSession, Some(BurstEnvelope))` on the v2 path and
+    /// `(FlashSession, None)` on the v1 path. Both public entry points call this function
+    /// so the sender-side cryptographic construction has a single source of truth.
+    async fn open_and_send_core(
+        state: RecipientState,
+        payload: &[u8],
+        cache: &WarmCache,
+        engine: &PerturbationEngine,
+    ) -> Result<(FlashSession, Option<crate::corridor::BurstEnvelope>), TransportError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Self::open_and_send_core_at(state, payload, cache, engine, now).await
+    }
+
+    /// Time-parameterized send core — single source of truth for all path variants.
+    ///
+    /// `now` governs every time-sensitive check in this operation: handshake ephemeral
+    /// expiry and any future time-dependent policy. Production callers supply
+    /// `SystemTime::now()` via [`open_and_send_core`]; simulator callers supply
+    /// `ctx.now()` via [`open_and_send_sim`]. A single evaluation clock per call
+    /// is enforced by this interface.
+    async fn open_and_send_core_at(
+        state: RecipientState,
+        payload: &[u8],
+        cache: &WarmCache,
+        engine: &PerturbationEngine,
+        now: u64,
+    ) -> Result<(FlashSession, Option<crate::corridor::BurstEnvelope>), TransportError> {
         if !state.vitality.is_open() {
             return Err(TransportError::VitalityInsufficient(state.vitality));
         }
@@ -95,16 +255,13 @@ impl FlashSession {
         let nonce = FreshnessNonce::generate();
 
         // Determine key derivation path and transcript version.
-        let (ephemeral_seed, transcript_hash) = match &state.handshake_ephemeral {
+        // v2 path also captures sender_pub for BurstEnvelope construction.
+        let (ephemeral_seed, transcript_hash, v2_sender_pub) = match &state.handshake_ephemeral {
             Some(hk) => {
                 // v2 path: bilateral DH.
                 // Defense-in-depth: transport layer independently rejects expired ephemerals
                 // even if the state layer failed to filter them. This guards against a
                 // compromised state layer feeding stale-but-validly-signed keys.
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
                 if hk.expires_at <= now {
                     return Err(TransportError::HandshakeKeyExpired);
                 }
@@ -130,7 +287,7 @@ impl FlashSession {
                     sender_ephemeral_pub: sender_pub,
                 };
 
-                (dh_output, transcript.hash())
+                (dh_output, transcript.hash(), Some(sender_pub))
             }
             None => {
                 // v1 fallback: OsRng seed (no bilateral DH).
@@ -145,7 +302,7 @@ impl FlashSession {
                     protocol_version:  1,
                 };
 
-                (seed, transcript.hash())
+                (seed, transcript.hash(), None)
             }
         };
 
@@ -157,9 +314,9 @@ impl FlashSession {
 
         let session_key = SessionKey(scp_derive_key(DomainLabel::Transport, &key_material.as_bytes()));
 
-        // Encrypt payload.
+        // Encrypt payload — retain enc_nonce for BurstEnvelope on the v2 path.
         let crypto_sk = CryptoSessionKey(session_key.0);
-        let (ciphertext, _enc_nonce) = crypto_sk.encrypt(payload);
+        let (ciphertext, enc_nonce) = crypto_sk.encrypt(payload);
 
         // Perturbation pipeline: normalize → jitter → relay select → transmit.
         let normalized = engine.normalize_payload(&ciphertext);
@@ -175,13 +332,32 @@ impl FlashSession {
         // Ignored if budget is exhausted or vitality is non-open.
         engine.maybe_emit_dummy(&state.vitality).await;
 
-        Ok(FlashSession {
+        // Capture values needed for the envelope before they move into FlashSession.
+        let envelope_route_id = route.clone();
+        let envelope_nonce    = nonce.clone();
+        let envelope_vitality = state.vitality.clone();
+        let envelope_ops_pub  = state.ops_pub;
+
+        let session = FlashSession {
             route,
             session_key,
             nonce,
             vitality: state.vitality,
             lifecycle: FlashSessionLifecycle::WarmCache { ttl: 600 },
-        })
+        };
+
+        let envelope = v2_sender_pub.map(|sender_pub| crate::corridor::BurstEnvelope {
+            sender_ephemeral_pub: sender_pub,
+            route_id:             envelope_route_id,
+            nonce:                envelope_nonce,
+            vitality_snapshot:    envelope_vitality,
+            ciphertext,
+            enc_nonce,
+            recipient_ops_pub:    envelope_ops_pub,
+            protocol_version:     2,
+        });
+
+        Ok((session, envelope))
     }
 
     /// Step 5: destroy all transport state. Returns a DissolvedProof token.
@@ -219,6 +395,47 @@ pub struct RecipientState {
     pub handshake_ephemeral: Option<PublishedHandshakeKey>,
 }
 
+impl RecipientState {
+    /// Returns a protocol-stable BLAKE3 commitment over the canonical state fields.
+    ///
+    /// Field ordering and byte encoding are consensus-relevant — future auditors,
+    /// federated providers, and zk-attestation systems depend on this being stable.
+    /// Any change to the hash input layout is a breaking change and must be
+    /// versioned (e.g., by prepending a domain separator byte in future revisions).
+    ///
+    /// Current encoding (v0):
+    ///   ops_pub(32) ‖ vitality_byte(1) ‖ ephemeral_present(1) ‖
+    ///   [if Some: ephemeral.pub_key(32) ‖ ephemeral.expires_at(8, LE)]
+    ///
+    /// Note: `ephemeral_present` is a binary flag today. If future versions add
+    /// algorithm negotiation, Kyber ephemerals, or multi-ephemeral bundles, replace
+    /// this with an `ephemeral_mode_byte` encoding capability sets.
+    pub fn commitment(&self) -> [u8; 32] {
+        use blake3::Hasher;
+        use scp_wire_format::constants::{
+            VITALITY_ACTIVE, VITALITY_BURNED, VITALITY_DORMANT,
+            VITALITY_SEVERED, VITALITY_SUSPENDED, VITALITY_WARM,
+        };
+        let vitality_byte = match self.vitality {
+            VitalityState::Active    => VITALITY_ACTIVE,
+            VitalityState::Warm      => VITALITY_WARM,
+            VitalityState::Dormant   => VITALITY_DORMANT,
+            VitalityState::Suspended => VITALITY_SUSPENDED,
+            VitalityState::Severed   => VITALITY_SEVERED,
+            VitalityState::Burned    => VITALITY_BURNED,
+        };
+        let mut h = Hasher::new();
+        h.update(&self.ops_pub);
+        h.update(&[vitality_byte]);
+        h.update(&[self.handshake_ephemeral.is_some() as u8]);
+        if let Some(eph) = &self.handshake_ephemeral {
+            h.update(&eph.pub_key);
+            h.update(&eph.expires_at.to_le_bytes());
+        }
+        *h.finalize().as_bytes()
+    }
+}
+
 /// Warm session cache entry (lives 5–15 minutes post-burst).
 pub struct WarmCacheEntry {
     pub route: RouteId,
@@ -230,6 +447,8 @@ pub struct WarmCacheEntry {
 pub enum TransportError {
     #[error("recipient vitality too low: {0:?}")]
     VitalityInsufficient(VitalityState),
+    #[error("recipient operational key is revoked")]
+    RecipientRevoked,
     #[error("route generation failed")]
     RoutingFailed,
     #[error("burst transmission failed")]
@@ -238,5 +457,9 @@ pub enum TransportError {
     HandshakeKeyInvalid,
     #[error("handshake ephemeral key has expired")]
     HandshakeKeyExpired,
+    #[error("decryption failed: authentication tag mismatch or wrong session key")]
+    DecryptionFailed,
+    #[error("v1 path (OsRng seed) cannot be decrypted by recipient — requires v2 bilateral DH")]
+    V1PathNotReceivable,
 }
 

@@ -35,9 +35,27 @@ test/        — adversarial · recovery · metadata · transport
 docs/        — philosophy · sts · threat-model · cryptography · transport
 ```
 
+## Dev Harness Status
+
+| Milestone | Verdict |
+|-----------|---------|
+| Trial 0 — in-process encrypted exchange | `TRIAL_0_IN_PROCESS_CRYPTOGRAPHIC_EXCHANGE_PROVEN` |
+| Level 1 — multi-process localhost exchange | `MULTIPROCESS_LOCALHOST_DEV_HARNESS_PROVEN` |
+| Level 2 — three-machine LAN/mesh exchange | `LEVEL_2_LAN_DEV_HARNESS_PROVEN` |
+| Option 1 — ProviderPool real-network liveness observation | `PROVIDERPOOL_REAL_NETWORK_LIVENESS_OBSERVATION_PROVEN` |
+| Option 2 — pool-liveness-gated multi-relay routing | `PROVIDERPOOL_MULTIRELAY_ROUTING_SEAM_PROVEN` |
+
+Workspace serial baseline at authorized commit `b2ac7f499cb4564cf746657f3b14d0252b12badf`: **429 passing, 0 failed**.  
+Current HEAD serial baseline: **546 passing, 0 failed, 2 ignored** (live-mesh tests, run manually per `docs/architecture/LAN_DEV_HARNESS_RUNBOOK.md`).
+
+Binaries: `scp-cli` (Endpoint A/B) and `scp-relay` (relay node). See `docs/architecture/LAN_DEV_HARNESS_RUNBOOK.md` for deployment procedure.
+
+Note: `sim_s34` and `sim_s41` exhibit RNG-based flakiness under parallel execution. Use `--test-threads=1` for deterministic results.
+
 ## Quick Start
 
 ```bash
 cargo check --workspace
-cargo test --workspace
+cargo build --release
+cargo test --workspace -- --test-threads=1
 ```

@@ -21,12 +21,13 @@ async fn dissolved_session_leaves_no_reusable_route() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
 
     let cache  = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let session = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&[0xddu8; 32]).await.unwrap(),
+        FlashSession::retrieve_state(&StubStateProvider, &[0xddu8; 32]).await.unwrap(),
         b"blast-radius-test", &cache, &engine,
     ).await.expect("session must open");
 
@@ -58,12 +59,13 @@ async fn warm_cache_key_expires_after_purge() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
 
     let cache  = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let session = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&[0xeeu8; 32]).await.unwrap(),
+        FlashSession::retrieve_state(&StubStateProvider, &[0xeeu8; 32]).await.unwrap(),
         b"purge-test", &cache, &engine,
     ).await.expect("session must open");
 
@@ -84,6 +86,7 @@ async fn multiple_session_keys_statistically_independent() {
     use scp_relay_cache::WarmCache;
     use scp_relay_perturbation::PerturbationEngine;
     use scp_transport::flash::FlashSession;
+    use scp_transport::StubStateProvider;
     use std::collections::HashSet;
 
     let cache  = WarmCache::new(Duration::from_secs(600));
@@ -92,7 +95,7 @@ async fn multiple_session_keys_statistically_independent() {
     let mut keys: Vec<[u8; 32]> = Vec::new();
     for i in 0u8..20 {
         let session = FlashSession::open_and_send(
-            FlashSession::retrieve_state(&[i; 32]).await.unwrap(),
+            FlashSession::retrieve_state(&StubStateProvider, &[i; 32]).await.unwrap(),
             b"independence-test", &cache, &engine,
         ).await.expect("session must open");
         keys.push(session.session_key.0);

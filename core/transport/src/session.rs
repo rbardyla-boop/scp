@@ -38,17 +38,23 @@ pub struct FreshnessNonce(pub u64);
 
 impl RouteId {
     pub fn generate() -> Self {
-        let mut buf = [0u8; 16];
-        OsRng.fill_bytes(&mut buf);
-        Self(buf)
+        Self::generate_with_rng(&mut OsRng)
+    }
+
+    pub fn generate_with_rng(rng: &mut impl RngCore) -> Self {
+        let mut id = [0u8; 16];
+        rng.fill_bytes(&mut id);
+        Self(id)
     }
 }
 
 impl FreshnessNonce {
     /// Generate a cryptographically random nonce (not monotonic — avoids clock dependency).
     pub fn generate() -> Self {
-        let mut buf = [0u8; 8];
-        OsRng.fill_bytes(&mut buf);
-        Self(u64::from_le_bytes(buf))
+        Self::generate_with_rng(&mut OsRng)
+    }
+
+    pub fn generate_with_rng(rng: &mut impl RngCore) -> Self {
+        Self(rng.next_u64())
     }
 }

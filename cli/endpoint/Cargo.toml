@@ -1,0 +1,21 @@
+[package]
+name = "scp-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Dev-harness endpoint CLI for Trial 0 / Level 1 exchange. NOT PRODUCTION."
+
+[[bin]]
+name = "scp-cli"
+path = "src/main.rs"
+
+[dependencies]
+tokio    = { workspace = true }
+serde    = { workspace = true }
+scp-transport    = { workspace = true }
+scp-cryptography = { workspace = true }
+scp-wire-format  = { workspace = true }
+scp-provider-pool     = { workspace = true }
+scp-provider-delivery = { workspace = true }
+rand_core = { workspace = true }
+serde_json = "1"

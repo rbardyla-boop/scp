@@ -25,3 +25,7 @@ client/desktop/src-tauri/target/
 .vscode/
 *.swp
 *.swo
+
+# Dev-harness key files and test fixtures (NOT PRODUCTION — see cli/endpoint/src/main.rs)
+*.key
+*.card

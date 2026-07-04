@@ -11,10 +11,14 @@ members = [
     "relay/mesh",
     "relay/cache",
     "relay/perturbation",
+    "provider/pool",
+    "provider/delivery",
     "ledger/substrate",
     "ledger/cosmos",
     # "client/desktop/src-tauri",  # standalone — requires webkit2gtk on Linux
     "test",
+    "relay/daemon",
+    "cli/endpoint",
 ]
 
 [workspace.package]
@@ -43,6 +47,9 @@ serde_cbor = "0.11"
 # Error handling
 thiserror = "1"
 
+# Property-based testing
+proptest = { version = "1" }
+
 # Noise Protocol Framework
 snow = "0.9"
 
@@ -56,6 +63,9 @@ scp-vitality     = { path = "core/vitality" }
 scp-transport    = { path = "core/transport" }
 scp-recovery     = { path = "core/recovery" }
 scp-wire-format        = { path = "scp-wire-format" }
+scp-ledger-substrate   = { path = "ledger/substrate" }
 scp-relay-mesh         = { path = "relay/mesh" }
 scp-relay-cache        = { path = "relay/cache" }
 scp-relay-perturbation = { path = "relay/perturbation" }
+scp-provider-pool      = { path = "provider/pool" }
+scp-provider-delivery  = { path = "provider/delivery" }
