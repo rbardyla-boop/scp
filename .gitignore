@@ -2,6 +2,8 @@
 /target/
 **/*.rs.bk
 Cargo.lock
+tolsv3/
+.powerplant/
 
 # Android
 client/mobile/android/.gradle/
