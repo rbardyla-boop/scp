@@ -286,6 +286,13 @@ Deliver:
 
 Why first: no security risk, high public value, feeds the real Console.
 
+Implementation note (2026-07-05): Milestone A is now in progress. The trace
+artifact is `docs/design/corridor-console-validation/relay-kill-failover-live-2026-07-05.trace.json`,
+with a matching static copy served by the Pages app. The trace is intentionally
+aggregate-only: scenario metadata, relay counts, delivery counts, entropy,
+`kappa`, exposure estimate, membership confidence, relay display status, and
+event annotations.
+
 ### Milestone B — Local Preview App
 
 Deliver:

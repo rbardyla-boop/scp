@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "run_id": "scp-failover-trace-2026-07-05",
+  "commit": "69a56e9",
+  "captured_at": "2026-07-05T12:23:00Z",
+  "scenario": "two-relay dev-harness failover replay",
+  "topology_label": "two configured blind relays; one survivor; one killed and restored",
+  "honesty_label": "Static replay of a real dev-harness run over Tailscale/WireGuard. Measures relay diversity in a harness; not a real-world anonymity guarantee.",
+  "relays": [
+    {
+      "id": "relay-a",
+      "label": "Relay A",
+      "role": "survivor",
+      "display_color": "green"
+    },
+    {
+      "id": "relay-b",
+      "label": "Relay B",
+      "role": "killed-and-restored",
+      "display_color": "amber"
+    }
+  ],
+  "ticks": [
+    {
+      "tick": 0,
+      "time_label": "00s",
+      "phase": "both relays reachable",
+      "relay_count": 2,
+      "live_relay_count": 2,
+      "delivery_success_count": 0,
+      "delivery_failure_count": 0,
+      "selection_entropy_bits": 1.0,
+      "kappa": 0.0,
+      "exposure_estimate": 0.5,
+      "membership_confidence": 0.5,
+      "relays": [
+        { "id": "relay-a", "status": "live", "stored_bursts": 0 },
+        { "id": "relay-b", "status": "live", "stored_bursts": 0 }
+      ],
+      "events": [
+        "Both configured relays were reachable before the failure."
+      ]
+    },
+    {
+      "tick": 1,
+      "time_label": "08s",
+      "phase": "dev-harness setup",
+      "relay_count": 2,
+      "live_relay_count": 2,
+      "delivery_success_count": 0,
+      "delivery_failure_count": 0,
+      "selection_entropy_bits": 1.0,
+      "kappa": 0.0,
+      "exposure_estimate": 0.5,
+      "membership_confidence": 0.5,
+      "relays": [
+        { "id": "relay-a", "status": "live", "stored_bursts": 0 },
+        { "id": "relay-b", "status": "live", "stored_bursts": 0 }
+      ],
+      "events": [
+        "Dev-harness setup completed.",
+        "Trace remains aggregate-only."
+      ]
+    },
+    {
+      "tick": 2,
+      "time_label": "16s",
+      "phase": "relay killed",
+      "relay_count": 2,
+      "live_relay_count": 1,
+      "delivery_success_count": 0,
+      "delivery_failure_count": 1,
+      "selection_entropy_bits": 0.0,
+      "kappa": 1.0,
+      "exposure_estimate": 1.0,
+      "membership_confidence": 1.0,
+      "relays": [
+        { "id": "relay-a", "status": "live", "stored_bursts": 0 },
+        { "id": "relay-b", "status": "down", "stored_bursts": 0 }
+      ],
+      "events": [
+        "Relay B was stopped for real.",
+        "Only one configured relay remained reachable."
+      ]
+    },
+    {
+      "tick": 3,
+      "time_label": "27s",
+      "phase": "send via survivor",
+      "relay_count": 2,
+      "live_relay_count": 1,
+      "delivery_success_count": 1,
+      "delivery_failure_count": 1,
+      "selection_entropy_bits": 0.0,
+      "kappa": 1.0,
+      "exposure_estimate": 1.0,
+      "membership_confidence": 1.0,
+      "relays": [
+        { "id": "relay-a", "status": "live", "stored_bursts": 1 },
+        { "id": "relay-b", "status": "down", "stored_bursts": 0 }
+      ],
+      "events": [
+        "Send still used both configured relay slots.",
+        "The live relay stored the burst.",
+        "Aggregate result: burst_replicated count=1."
+      ]
+    },
+    {
+      "tick": 4,
+      "time_label": "40s",
+      "phase": "receive via survivor",
+      "relay_count": 2,
+      "live_relay_count": 1,
+      "delivery_success_count": 1,
+      "delivery_failure_count": 1,
+      "selection_entropy_bits": 0.0,
+      "kappa": 1.0,
+      "exposure_estimate": 1.0,
+      "membership_confidence": 1.0,
+      "relays": [
+        { "id": "relay-a", "status": "live", "stored_bursts": 0 },
+        { "id": "relay-b", "status": "down", "stored_bursts": 0 }
+      ],
+      "events": [
+        "Receive still used both configured relay slots.",
+        "The survivor relay delivered exactly one decrypted payload.",
+        "Aggregate result: exchange_complete count=1."
+      ]
+    },
+    {
+      "tick": 5,
+      "time_label": "53s",
+      "phase": "relay restored",
+      "relay_count": 2,
+      "live_relay_count": 2,
+      "delivery_success_count": 1,
+      "delivery_failure_count": 1,
+      "selection_entropy_bits": 1.0,
+      "kappa": 0.0,
+      "exposure_estimate": 0.5,
+      "membership_confidence": 0.5,
+      "relays": [
+        { "id": "relay-a", "status": "live", "stored_bursts": 0 },
+        { "id": "relay-b", "status": "restored", "stored_bursts": 0 }
+      ],
+      "events": [
+        "Relay B was restarted.",
+        "Both relays were reachable again.",
+        "Verdict checks passed: partial-success failover, survivor delivery, no vitality vocabulary."
+      ]
+    }
+  ]
+}

@@ -16,6 +16,7 @@
         --green: #9df2bd;
         --amber: #f0b15d;
         --red: #ef7564;
+        --blue: #8ec8ff;
       }
 
       * {
@@ -131,6 +132,232 @@
         padding: 54px 0;
       }
 
+      .replay {
+        background: #101416;
+      }
+
+      .replay-grid {
+        display: grid;
+        grid-template-columns: minmax(320px, 0.92fr) minmax(360px, 1.08fr);
+        gap: 24px;
+        align-items: stretch;
+      }
+
+      .meter-panel,
+      .trace-panel {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 24px;
+        min-height: 520px;
+      }
+
+      .panel-head h2,
+      .trace-topline h2 {
+        margin: 0;
+        font-size: clamp(1.8rem, 4vw, 3rem);
+        line-height: 1.05;
+      }
+
+      .meter {
+        display: grid;
+        justify-items: center;
+        gap: 18px;
+        margin: 28px auto 22px;
+      }
+
+      .meter-arc {
+        position: relative;
+        width: min(100%, 330px);
+        aspect-ratio: 2 / 1;
+        overflow: hidden;
+        border-radius: 330px 330px 0 0;
+        background:
+          radial-gradient(circle at 50% 100%, var(--panel) 0 48%, transparent 49%),
+          conic-gradient(
+            from 270deg at 50% 100%,
+            var(--green) 0deg,
+            var(--amber) 88deg,
+            var(--red) 180deg,
+            transparent 181deg
+          );
+        border: 1px solid var(--line);
+        border-bottom: 0;
+      }
+
+      .needle {
+        --needle-angle: 0deg;
+        position: absolute;
+        left: 50%;
+        bottom: 0;
+        width: 3px;
+        height: 86%;
+        background: var(--text);
+        border-radius: 999px;
+        transform-origin: 50% 100%;
+        transform: translateX(-50%) rotate(var(--needle-angle));
+        transition: transform 240ms ease;
+        box-shadow: 0 0 18px rgba(245, 240, 232, 0.45);
+      }
+
+      .meter-value {
+        text-align: center;
+      }
+
+      .meter-value strong {
+        display: block;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 3rem;
+        line-height: 1;
+      }
+
+      .meter-value span {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+      }
+
+      .metric-grid div {
+        min-height: 84px;
+        background: #0d1113;
+        padding: 14px;
+      }
+
+      .metric-grid span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.82rem;
+        line-height: 1.25;
+      }
+
+      .metric-grid strong {
+        display: block;
+        margin-top: 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 1.3rem;
+        line-height: 1.2;
+      }
+
+      .meter-caveat {
+        margin: 18px 0 0;
+        padding-left: 14px;
+        border-left: 3px solid var(--amber);
+        color: var(--text);
+        line-height: 1.55;
+        font-size: 0.96rem;
+      }
+
+      .trace-topline {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: start;
+      }
+
+      .trace-topline > span {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--green);
+        border: 1px solid var(--line);
+        min-width: 64px;
+        text-align: center;
+        padding: 8px 10px;
+      }
+
+      .replay-controls {
+        display: grid;
+        grid-template-columns: auto auto minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+        margin: 28px 0 20px;
+      }
+
+      .replay-controls button {
+        appearance: none;
+        border: 1px solid var(--line);
+        background: var(--text);
+        color: var(--bg);
+        min-width: 78px;
+        min-height: 44px;
+        font: inherit;
+        font-weight: 750;
+        cursor: pointer;
+      }
+
+      .replay-controls button + button {
+        background: transparent;
+        color: var(--text);
+      }
+
+      .replay-controls input[type="range"] {
+        width: 100%;
+        accent-color: var(--green);
+      }
+
+      .relay-strip {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        min-height: 112px;
+      }
+
+      .relay-node {
+        border: 1px solid var(--line);
+        padding: 16px;
+        background: #0d1113;
+      }
+
+      .relay-node strong {
+        display: block;
+        font-size: 1.15rem;
+      }
+
+      .relay-node span {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 6px 8px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.82rem;
+        border: 1px solid var(--line);
+      }
+
+      .relay-node[data-status="live"] span,
+      .relay-node[data-status="restored"] span {
+        color: var(--green);
+      }
+
+      .relay-node[data-status="down"] span {
+        color: var(--red);
+      }
+
+      .relay-node p {
+        margin: 10px 0 0;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+
+      .event-log {
+        margin: 22px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 10px;
+      }
+
+      .event-log li {
+        min-height: 42px;
+        padding: 10px 12px;
+        border-left: 3px solid var(--blue);
+        background: #0d1113;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+
       .summary {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -233,8 +460,22 @@
 
         .summary,
         .copy,
+        .replay-grid,
         .honesty .band {
           grid-template-columns: 1fr;
+        }
+
+        .meter-panel,
+        .trace-panel {
+          min-height: auto;
+        }
+
+        .replay-controls {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .replay-controls input[type="range"] {
+          grid-column: 1 / -1;
         }
 
         .links a {
@@ -255,17 +496,92 @@
         <h1>SCP Corridor Console</h1>
         <p class="subtitle">
           A speedometer for metadata exposure. This recorded run kills one blind
-          relay while both relays remain configured; the message still arrives
-          through the survivor.
+          relay while both relays remain configured; scrub the trace and watch
+          the exposure meter move.
         </p>
         <nav class="links" aria-label="Project links">
           <a href="https://github.com/rbardyla-boop/scp">GitHub</a>
           <a href="https://github.com/rbardyla-boop/scp/blob/master/docs/design/corridor-console-validation/relay-kill-failover-live-2026-07-05.log">Evidence log</a>
+          <a href="https://github.com/rbardyla-boop/scp/blob/master/docs/design/corridor-console-validation/relay-kill-failover-live-2026-07-05.trace.json">Trace JSON</a>
           <a href="https://github.com/rbardyla-boop/scp/blob/master/docs/design/office-hours-scp-corridor-console-wedge-2026-07-05.md">Design note</a>
         </nav>
       </div>
     </header>
     <main>
+      <section class="replay" aria-labelledby="replay-title">
+        <div class="band replay-grid">
+          <div class="meter-panel">
+            <div class="panel-head">
+              <p class="eyebrow">Aggregate trace replay</p>
+              <h2 id="replay-title">Exposure Meter</h2>
+            </div>
+            <div
+              class="meter"
+              aria-label="Exposure estimate"
+              role="meter"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="50"
+              id="exposure-meter"
+            >
+              <div class="meter-arc">
+                <div class="needle" id="meter-needle"></div>
+              </div>
+              <div class="meter-value">
+                <strong id="exposure-value">0.50</strong>
+                <span>exposure estimate</span>
+              </div>
+            </div>
+            <div class="metric-grid" aria-label="Replay metrics">
+              <div>
+                <span>kappa</span>
+                <strong id="metric-kappa">0.00</strong>
+              </div>
+              <div>
+                <span>selection entropy</span>
+                <strong id="metric-entropy">1.00 bits</strong>
+              </div>
+              <div>
+                <span>membership confidence</span>
+                <strong id="metric-confidence">0.50</strong>
+              </div>
+              <div>
+                <span>live relays</span>
+                <strong id="metric-live-relays">2 / 2</strong>
+              </div>
+            </div>
+            <p class="meter-caveat" id="honesty-label">
+              Static replay of a real dev-harness run over Tailscale/WireGuard.
+              Measures relay diversity in a harness; not a real-world anonymity
+              guarantee.
+            </p>
+          </div>
+          <div class="trace-panel">
+            <div class="trace-topline">
+              <div>
+                <p class="eyebrow">Timeline</p>
+                <h2 id="phase-label">Loading trace</h2>
+              </div>
+              <span id="time-label">00s</span>
+            </div>
+            <div class="replay-controls">
+              <button type="button" id="play-toggle">Play</button>
+              <button type="button" id="reset-trace">Reset</button>
+              <input
+                type="range"
+                id="trace-scrubber"
+                min="0"
+                max="0"
+                value="0"
+                step="1"
+                aria-label="Replay timeline"
+              />
+            </div>
+            <div class="relay-strip" id="relay-strip" aria-label="Relay status"></div>
+            <ol class="event-log" id="event-log" aria-label="Trace events"></ol>
+          </div>
+        </div>
+      </section>
       <section>
         <div class="band summary" aria-label="Run summary">
           <div>

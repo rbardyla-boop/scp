@@ -4,18 +4,19 @@ A consent-based cryptographic relationship protocol. Identity is sovereign. Tran
 
 ![SCP relay-kill failover demo](docs/design/corridor-console-validation/relay-kill-failover-live-2026-07-05.gif)
 
-**SCP is building a speedometer for metadata exposure.** This recorded dev-harness
-run keeps two blind relays configured, kills one relay for real, and still
-delivers the message through the survivor.
+**SCP is building a speedometer for metadata exposure.** This interactive
+dev-harness replay keeps two blind relays configured, kills one relay for real,
+and still delivers the message through the survivor while the exposure meter
+and relay strip move from aggregate trace data.
 
 Live demo: <https://rbardyla-boop.github.io/scp/>
 
 Evidence log:
 [`relay-kill-failover-live-2026-07-05.log`](docs/design/corridor-console-validation/relay-kill-failover-live-2026-07-05.log)
 
-Demo scope: dev-harness replay over Tailscale/WireGuard. This is not production
-transport security, NAT traversal, production metadata resistance, or a
-real-world anonymity guarantee.
+Demo scope: aggregate dev-harness replay over Tailscale/WireGuard. This is not
+production transport security, NAT traversal, production metadata resistance, or
+a real-world anonymity guarantee.
 
 ## Architecture
 
