@@ -3,7 +3,9 @@
 // NOT PRODUCTION. Mailbox token possession is the only access control.
 // Relay restart clears ALL in-memory mailbox contents (documented limitation).
 // Optional --store-dir enables bounded dev-harness mailbox persistence across
-// relay restarts. It is not a production storage/privacy design.
+// relay restarts. Durable filenames are salted digests of mailbox tokens, but
+// queue existence, sizes, and mtimes remain at-rest metadata surfaces. This is
+// not a production storage/privacy design.
 // Routes only by DevMailboxId; never receives, stores, or logs identity keys.
 //
 // Wire protocol (per RUNTIME_BOOTSTRAP_PLAN.md §3.2):
@@ -13,6 +15,7 @@
 // Usage: scp-relay [--bind 127.0.0.1:PORT] [--store-dir PATH]
 //        default bind: 127.0.0.1:7700
 
+use rand::RngCore;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
@@ -24,6 +27,8 @@ use tokio::net::{TcpListener, TcpStream};
 const MAX_BURST_BYTES: usize = 1_048_576; // 1 MiB per burst
 const MAX_QUEUE_DEPTH: usize = 100; // oldest evicted on overflow
 const STORE_MAGIC: &[u8; 8] = b"SCPRLY1\n";
+const STORE_SALT_FILE: &str = "store.salt";
+const MAILBOX_FILENAME_DOMAIN: &[u8] = b"scp-relay-durable-mailbox-path-v1";
 
 type MailboxToken = [u8; 32];
 type Burst = Vec<u8>;
@@ -38,6 +43,7 @@ struct MailboxStore {
 
 struct DurableStore {
     dir: PathBuf,
+    salt: [u8; 32],
 }
 
 struct RelayConfig {
@@ -232,18 +238,32 @@ impl MailboxStore {
 impl DurableStore {
     fn new(dir: PathBuf) -> io::Result<Self> {
         fs::create_dir_all(&dir)?;
-        Ok(Self { dir })
+        let salt = load_or_create_salt(&dir)?;
+        Ok(Self { dir, salt })
     }
 
     fn mailbox_path(&self, token: &[u8; 32]) -> PathBuf {
+        self.dir
+            .join(format!("{}.mbox", self.mailbox_file_stem(token)))
+    }
+
+    fn legacy_mailbox_path(&self, token: &[u8; 32]) -> PathBuf {
         self.dir.join(format!("{}.mbox", hex(token)))
     }
 
+    fn mailbox_file_stem(&self, token: &[u8; 32]) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(MAILBOX_FILENAME_DOMAIN);
+        hasher.update(&self.salt);
+        hasher.update(token);
+        hasher.finalize().to_hex().to_string()
+    }
+
     fn load_queue(&self, token: &[u8; 32]) -> io::Result<Vec<Vec<u8>>> {
-        let path = self.mailbox_path(token);
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
+        let path = match self.queue_path_for_load(token) {
+            Some(path) => path,
+            None => return Ok(Vec::new()),
+        };
 
         let mut file = fs::File::open(path)?;
         let mut magic = [0u8; 8];
@@ -298,15 +318,65 @@ impl DurableStore {
             }
             file.sync_all()?;
         }
-        fs::rename(tmp_path, path)
+        fs::rename(tmp_path, path)?;
+        remove_if_exists(self.legacy_mailbox_path(token))
     }
 
     fn delete_queue(&self, token: &[u8; 32]) -> io::Result<()> {
-        match fs::remove_file(self.mailbox_path(token)) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e),
+        remove_if_exists(self.mailbox_path(token))?;
+        remove_if_exists(self.legacy_mailbox_path(token))
+    }
+
+    fn queue_path_for_load(&self, token: &[u8; 32]) -> Option<PathBuf> {
+        let path = self.mailbox_path(token);
+        if path.exists() {
+            return Some(path);
         }
+        let legacy_path = self.legacy_mailbox_path(token);
+        legacy_path.exists().then_some(legacy_path)
+    }
+}
+
+fn load_or_create_salt(dir: &Path) -> io::Result<[u8; 32]> {
+    let path = dir.join(STORE_SALT_FILE);
+    match read_salt(&path) {
+        Ok(salt) => Ok(salt),
+        Err(e) if e.kind() == ErrorKind::NotFound => create_salt(&path),
+        Err(e) => Err(e),
+    }
+}
+
+fn read_salt(path: &Path) -> io::Result<[u8; 32]> {
+    let mut file = fs::File::open(path)?;
+    if file.metadata()?.len() != 32 {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "invalid durable store salt length",
+        ));
+    }
+
+    let mut salt = [0u8; 32];
+    file.read_exact(&mut salt)?;
+    Ok(salt)
+}
+
+fn create_salt(path: &Path) -> io::Result<[u8; 32]> {
+    let mut salt = [0u8; 32];
+    let mut rng = rand::rngs::OsRng;
+    rng.fill_bytes(&mut salt);
+
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            file.write_all(&salt)?;
+            file.sync_all()?;
+            Ok(salt)
+        }
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => read_salt(path),
+        Err(e) => Err(e),
     }
 }
 
@@ -320,6 +390,14 @@ fn tmp_path(path: &Path) -> PathBuf {
     let mut tmp = path.to_path_buf();
     tmp.set_extension("tmp");
     tmp
+}
+
+fn remove_if_exists(path: PathBuf) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 fn parse_args() -> RelayConfig {

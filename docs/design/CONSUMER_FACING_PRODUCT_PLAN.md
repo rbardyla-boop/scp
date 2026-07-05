@@ -255,9 +255,12 @@ This is the biggest line between demo and usable.
 
 Implementation note (2026-07-05): the first durable-relay gut-check is an
 opt-in `scp-relay --store-dir PATH` mode with bounded mailbox files and a
-restart-survival test. Default relay behavior remains ephemeral. This does not
-yet satisfy the full product-candidate gate because TTL, replay/dedup policy,
-production mailbox privacy, and storage hardening are still open.
+restart-survival test. Durable filenames are salted digests, not raw mailbox
+tokens, and the Level 1 test asserts that the raw token is not used as the
+queue filename. Default relay behavior remains ephemeral. This does not yet
+satisfy the full product-candidate gate because TTL, global storage bounds,
+crash-during-delivery behavior, queue existence/size/mtime metadata, production
+mailbox privacy, and storage hardening are still open.
 
 ### 6. Installer and Releases
 

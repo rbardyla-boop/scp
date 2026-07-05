@@ -19,6 +19,7 @@
 //   - Wrong mailbox token produces no bursts at receive
 //   - Relay restart clears in-memory mailbox contents
 //   - Opt-in durable relay storage survives restart and drains once
+//   - Durable queue filenames do not expose raw mailbox tokens
 //   - No vocabulary labels (Active, Warm, Dormant, Suspended, Severed, Burned) in output
 //
 // Claims NOT proven here:
@@ -28,7 +29,7 @@
 //   - ProviderPool/telemetry integration
 
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
@@ -75,6 +76,19 @@ fn test_tmp_dir(suffix: &str) -> PathBuf {
 
 fn cleanup(dir: &PathBuf) {
     let _ = std::fs::remove_dir_all(dir);
+}
+
+fn durable_mailbox_files(dir: &Path) -> Vec<String> {
+    let mut files: Vec<String> = std::fs::read_dir(dir)
+        .expect("read durable relay store dir")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let name = entry.file_name().into_string().ok()?;
+            name.ends_with(".mbox").then_some(name)
+        })
+        .collect();
+    files.sort();
+    files
 }
 
 // ── Wait for relay to be ready ────────────────────────────────────────────────
@@ -436,7 +450,7 @@ async fn level1_durable_relay_survives_restart_when_store_dir_set() {
     let mailbox_id = extract_mailbox_id(&mailbox_out);
     let relay_addr = format!("127.0.0.1:{port}");
 
-    cli_run(&[
+    let (ok, send_output) = cli_run(&[
         "send",
         "--identity",
         alice_key.to_str().unwrap(),
@@ -450,6 +464,22 @@ async fn level1_durable_relay_survives_restart_when_store_dir_set() {
         "durable restart test",
     ])
     .await;
+    assert!(
+        ok,
+        "send to durable relay must succeed\nsend: {send_output}"
+    );
+
+    let durable_files = durable_mailbox_files(&store_dir);
+    let legacy_filename = format!("{mailbox_id}.mbox");
+    assert_eq!(
+        durable_files.len(),
+        1,
+        "durable relay must write one queue file before restart; files: {durable_files:?}"
+    );
+    assert!(
+        !durable_files.iter().any(|name| name == &legacy_filename),
+        "durable queue filename must not expose raw mailbox token; files: {durable_files:?}"
+    );
 
     relay.kill().await.ok();
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -499,6 +529,10 @@ async fn level1_durable_relay_survives_restart_when_store_dir_set() {
     assert!(
         recv_again.contains("\"count\":0"),
         "durable mailbox must drain exactly once; got: {recv_again}"
+    );
+    assert!(
+        durable_mailbox_files(&store_dir).is_empty(),
+        "durable mailbox file must be removed after drain"
     );
 
     relay2.kill().await.ok();
