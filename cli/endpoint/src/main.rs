@@ -17,6 +17,7 @@
 //            --mailbox <hex>
 //   agent-send     Send a signed agent envelope inside an encrypted burst.
 //   agent-receive  Poll, decrypt, verify pinned sender, TTL-check, and task_id-dedup.
+//                  Uses <identity>.agent-seen by default; override with --seen-dir <path>.
 //
 // Output events (vocabulary-neutral, no vitality label words):
 //   identity_created, mailbox_created, burst_stored, payload_decrypted,
@@ -33,10 +34,15 @@ use scp_transport::harness::{
 };
 use scp_wire_format::signing::handshake_sig_message;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 const AGENT_ENVELOPE_SCHEMA_VERSION: u16 = 1;
 const AGENT_ENVELOPE_SIGNING_DOMAIN: &[u8] = b"scp-agent-envelope-v0";
+const AGENT_SEEN_TASK_DOMAIN: &[u8] = b"scp-agent-seen-task-v1";
+const AGENT_SEEN_SALT_FILE: &str = "seen.salt";
+const MAX_AGENT_ENVELOPE_TTL_SECS: u64 = 86_400;
+const MAX_AGENT_ENVELOPE_FUTURE_SKEW_SECS: u64 = 300;
 
 // ── Identity file (private, 0600) ─────────────────────────────────────────────
 
@@ -89,6 +95,17 @@ struct AgentEnvelopeDraft {
     created_at: u64,
     ttl: u64,
     body: String,
+}
+
+struct SeenTaskStore {
+    dir: PathBuf,
+    salt: [u8; 32],
+}
+
+enum AgentEnvelopeTimeStatus {
+    Current { expires_at: u64 },
+    Expired,
+    Invalid(String),
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -413,6 +430,9 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
     let sender_card_path = require_arg(args, "--sender")?;
     let relay_addrs = collect_relays(args)?;
     let mailbox_hex = require_arg(args, "--mailbox")?;
+    let seen_dir = optional_arg(args, "--seen-dir")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_agent_seen_dir(&identity_path));
 
     let identity = load_identity(&identity_path)?;
     let expected_sender = load_card(&sender_card_path)?;
@@ -422,13 +442,13 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
     let hs_priv = parse_hex32(&identity.handshake_priv, "handshake_priv")?;
     let mailbox_id = DevMailboxId::from_hex(&mailbox_hex).map_err(|e| format!("{e}"))?;
     let now = now_secs()?;
+    let seen_tasks = SeenTaskStore::open(seen_dir, now)?;
 
     let mut pool = build_delivery_pool(&relay_addrs);
     let routes = select_relay_routes(&mut pool)?;
 
     let mut any_reachable = false;
     let mut seen_route_ids = std::collections::HashSet::new();
-    let mut seen_task_ids = std::collections::HashSet::new();
     let mut verified = 0usize;
     let mut rejected = 0usize;
     let mut expired = 0usize;
@@ -440,7 +460,18 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                 any_reachable = true;
                 let _ = pool.record_delivery_success(&route.receipt);
                 for blob in &blobs {
-                    let burst = deserialize_burst(blob).map_err(|e| format!("{e}"))?;
+                    let burst = match deserialize_burst(blob) {
+                        Ok(burst) => burst,
+                        Err(e) => {
+                            rejected += 1;
+                            let event = serde_json::json!({
+                                "event": "agent_message_rejected",
+                                "reason": format!("{e}"),
+                            });
+                            println!("{}", serde_json::to_string(&event).unwrap());
+                            continue;
+                        }
+                    };
                     let route_id_hex = hex_encode(&burst.route_id);
                     let plaintext = match receive_harness(&hs_priv, &ops_pub, &burst) {
                         Ok(plaintext) => plaintext,
@@ -499,26 +530,45 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                         continue;
                     }
 
-                    if envelope_expired(&envelope, now) {
-                        expired += 1;
-                        let event = serde_json::json!({
-                            "event": "agent_message_expired",
-                            "route_id": route_id_hex,
-                            "task_id": envelope.task_id,
-                        });
-                        println!("{}", serde_json::to_string(&event).unwrap());
-                        continue;
-                    }
+                    let expires_at = match agent_envelope_time_status(&envelope, now) {
+                        AgentEnvelopeTimeStatus::Current { expires_at } => expires_at,
+                        AgentEnvelopeTimeStatus::Expired => {
+                            expired += 1;
+                            let event = serde_json::json!({
+                                "event": "agent_message_expired",
+                                "route_id": route_id_hex,
+                                "task_id": envelope.task_id,
+                            });
+                            println!("{}", serde_json::to_string(&event).unwrap());
+                            continue;
+                        }
+                        AgentEnvelopeTimeStatus::Invalid(reason) => {
+                            rejected += 1;
+                            let event = serde_json::json!({
+                                "event": "agent_message_rejected",
+                                "route_id": route_id_hex,
+                                "task_id": envelope.task_id,
+                                "reason": reason,
+                            });
+                            println!("{}", serde_json::to_string(&event).unwrap());
+                            continue;
+                        }
+                    };
 
-                    if !seen_task_ids.insert(envelope.task_id.clone()) {
-                        duplicates += 1;
-                        let event = serde_json::json!({
-                            "event": "agent_message_duplicate",
-                            "route_id": route_id_hex,
-                            "task_id": envelope.task_id,
-                        });
-                        println!("{}", serde_json::to_string(&event).unwrap());
-                        continue;
+                    match seen_tasks.claim(&expected_sender_ops_pub, &envelope.task_id, expires_at)
+                    {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            duplicates += 1;
+                            let event = serde_json::json!({
+                                "event": "agent_message_duplicate",
+                                "route_id": route_id_hex,
+                                "task_id": envelope.task_id,
+                            });
+                            println!("{}", serde_json::to_string(&event).unwrap());
+                            continue;
+                        }
+                        Err(e) => return Err(format!("agent seen-task store: {e}")),
                     }
 
                     verified += 1;
@@ -679,6 +729,17 @@ fn collect_required_values(args: &[String], flag: &str) -> Result<Vec<String>, S
     Ok(values)
 }
 
+fn optional_arg(args: &[String], flag: &str) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == flag && i + 1 < args.len() {
+            return Some(args[i + 1].clone());
+        }
+        i += 1;
+    }
+    None
+}
+
 fn parse_u64_arg(args: &[String], flag: &str) -> Result<u64, String> {
     require_arg(args, flag)?
         .parse::<u64>()
@@ -776,6 +837,12 @@ fn verify_agent_envelope(envelope: &AgentEnvelopeV0) -> Result<(), String> {
     if envelope.ttl == 0 {
         return Err("agent envelope ttl must be greater than zero".to_string());
     }
+    if envelope.ttl > MAX_AGENT_ENVELOPE_TTL_SECS {
+        return Err(format!(
+            "agent envelope ttl exceeds max {} seconds",
+            MAX_AGENT_ENVELOPE_TTL_SECS
+        ));
+    }
 
     verified_card_keys(&envelope.from).map_err(|e| format!("sender card: {e}"))?;
     let from_ops_pub = parse_hex32(&envelope.from.ops_pub, "from.ops_pub")?;
@@ -787,10 +854,22 @@ fn verify_agent_envelope(envelope: &AgentEnvelopeV0) -> Result<(), String> {
     Ok(())
 }
 
-fn envelope_expired(envelope: &AgentEnvelopeV0, now: u64) -> bool {
-    match envelope.created_at.checked_add(envelope.ttl) {
-        Some(expires_at) => now > expires_at,
-        None => true,
+fn agent_envelope_time_status(envelope: &AgentEnvelopeV0, now: u64) -> AgentEnvelopeTimeStatus {
+    if envelope.created_at > now.saturating_add(MAX_AGENT_ENVELOPE_FUTURE_SKEW_SECS) {
+        return AgentEnvelopeTimeStatus::Invalid(format!(
+            "agent envelope created_at is more than {} seconds in the future",
+            MAX_AGENT_ENVELOPE_FUTURE_SKEW_SECS
+        ));
+    }
+
+    let Some(expires_at) = envelope.created_at.checked_add(envelope.ttl) else {
+        return AgentEnvelopeTimeStatus::Invalid("agent envelope expiry overflow".to_string());
+    };
+
+    if now > expires_at {
+        AgentEnvelopeTimeStatus::Expired
+    } else {
+        AgentEnvelopeTimeStatus::Current { expires_at }
     }
 }
 
@@ -834,6 +913,136 @@ fn push_u16(out: &mut Vec<u8>, value: u16) {
 
 fn push_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
+}
+
+impl SeenTaskStore {
+    fn open(dir: PathBuf, now: u64) -> Result<Self, String> {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("create seen-task dir: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| format!("restrict seen-task dir permissions: {e}"))?;
+        }
+        let salt = load_or_create_seen_salt(&dir)?;
+        let store = Self { dir, salt };
+        store.purge_expired(now)?;
+        Ok(store)
+    }
+
+    fn claim(&self, sender_ops_pub: &str, task_id: &str, expires_at: u64) -> std::io::Result<bool> {
+        let path = self.task_path(sender_ops_pub, task_id);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+                }
+                file.write_all(&expires_at.to_le_bytes())?;
+                file.sync_all()?;
+                Ok(true)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn purge_expired(&self, now: u64) -> Result<(), String> {
+        let entries =
+            std::fs::read_dir(&self.dir).map_err(|e| format!("read seen-task dir: {e}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("read seen-task entry: {e}"))?;
+            let path = entry.path();
+            if path.file_name().and_then(|n| n.to_str()) == Some(AGENT_SEEN_SALT_FILE) {
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("seen") {
+                continue;
+            }
+            let remove = match std::fs::read(&path) {
+                Ok(bytes) if bytes.len() == 8 => {
+                    let mut arr = [0u8; 8];
+                    arr.copy_from_slice(&bytes);
+                    now > u64::from_le_bytes(arr)
+                }
+                Ok(_) | Err(_) => true,
+            };
+            if remove {
+                std::fs::remove_file(&path)
+                    .map_err(|e| format!("remove expired seen-task file: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn task_path(&self, sender_ops_pub: &str, task_id: &str) -> PathBuf {
+        let mut material = Vec::new();
+        material.extend_from_slice(AGENT_SEEN_TASK_DOMAIN);
+        material.extend_from_slice(&self.salt);
+        push_str(&mut material, sender_ops_pub);
+        push_str(&mut material, task_id);
+        let digest = blake3::hash(&material).to_hex().to_string();
+        self.dir.join(format!("{digest}.seen"))
+    }
+}
+
+fn default_agent_seen_dir(identity_path: &str) -> PathBuf {
+    PathBuf::from(format!("{identity_path}.agent-seen"))
+}
+
+fn load_or_create_seen_salt(dir: &Path) -> Result<[u8; 32], String> {
+    let path = dir.join(AGENT_SEEN_SALT_FILE);
+    match read_seen_salt(&path) {
+        Ok(salt) => Ok(salt),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => create_seen_salt(&path),
+        Err(e) => Err(format!("read seen-task salt: {e}")),
+    }
+}
+
+fn read_seen_salt(path: &Path) -> std::io::Result<[u8; 32]> {
+    let mut file = std::fs::File::open(path)?;
+    if file.metadata()?.len() != 32 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid seen-task salt length",
+        ));
+    }
+    let mut salt = [0u8; 32];
+    file.read_exact(&mut salt)?;
+    Ok(salt)
+}
+
+fn create_seen_salt(path: &Path) -> Result<[u8; 32], String> {
+    let mut salt = [0u8; 32];
+    OsRng.fill_bytes(&mut salt);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                    .map_err(|e| format!("restrict seen-task salt permissions: {e}"))?;
+            }
+            file.write_all(&salt)
+                .map_err(|e| format!("write seen-task salt: {e}"))?;
+            file.sync_all()
+                .map_err(|e| format!("sync seen-task salt: {e}"))?;
+            Ok(salt)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            read_seen_salt(path).map_err(|e| format!("read seen-task salt: {e}"))
+        }
+        Err(e) => Err(format!("create seen-task salt: {e}")),
+    }
 }
 
 fn parse_hex32(hex: &str, field: &str) -> Result<[u8; 32], String> {
@@ -974,7 +1183,7 @@ mod tests {
     #[test]
     fn agent_envelope_expiry_is_receiver_enforced() {
         let identity = test_identity();
-        let envelope = build_agent_envelope(
+        let mut envelope = build_agent_envelope(
             &identity,
             AgentEnvelopeDraft {
                 task_id: "task-2".to_string(),
@@ -991,7 +1200,42 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!envelope_expired(&envelope, 1_010));
-        assert!(envelope_expired(&envelope, 1_011));
+        assert!(matches!(
+            agent_envelope_time_status(&envelope, 1_010),
+            AgentEnvelopeTimeStatus::Current { .. }
+        ));
+        assert!(matches!(
+            agent_envelope_time_status(&envelope, 1_011),
+            AgentEnvelopeTimeStatus::Expired
+        ));
+
+        envelope.created_at = 1_500;
+        assert!(matches!(
+            agent_envelope_time_status(&envelope, 1_000),
+            AgentEnvelopeTimeStatus::Invalid(_)
+        ));
+    }
+
+    #[test]
+    fn agent_envelope_rejects_oversized_ttl() {
+        let identity = test_identity();
+        let envelope = build_agent_envelope(
+            &identity,
+            AgentEnvelopeDraft {
+                task_id: "task-3".to_string(),
+                kind: "echo".to_string(),
+                from: contact_card_from_identity(&identity),
+                reply_to: AgentReplyTo {
+                    relays: vec!["127.0.0.1:7700".to_string()],
+                    mailbox: "c".repeat(64),
+                },
+                created_at: 1_000,
+                ttl: MAX_AGENT_ENVELOPE_TTL_SECS + 1,
+                body: "hello".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert!(verify_agent_envelope(&envelope).is_err());
     }
 }

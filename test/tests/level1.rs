@@ -28,10 +28,12 @@
 //   - Identity persistence durability
 //   - ProviderPool/telemetry integration
 
+use scp_transport::harness::DevMailboxId;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 // ── Binary paths ─────────────────────────────────────────────────────────────
@@ -119,6 +121,26 @@ async fn wait_for_relay(port: u16) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("relay on port {port} did not become ready within 2.5 seconds");
+}
+
+async fn relay_store_raw(port: u16, mailbox_hex: &str, payload: &[u8]) {
+    let mailbox = DevMailboxId::from_hex(mailbox_hex).expect("mailbox hex must parse");
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+        .await
+        .expect("connect to relay for raw store");
+    stream.write_all(&[0x01]).await.expect("write store cmd");
+    stream
+        .write_all(&mailbox.0)
+        .await
+        .expect("write mailbox token");
+    stream
+        .write_all(&(payload.len() as u32).to_le_bytes())
+        .await
+        .expect("write raw payload len");
+    stream.write_all(payload).await.expect("write raw payload");
+    let mut ack = [0u8; 1];
+    stream.read_exact(&mut ack).await.expect("read store ack");
+    assert_eq!(ack, [0x00], "relay raw store must ack");
 }
 
 // ── CLI helpers ───────────────────────────────────────────────────────────────
@@ -600,6 +622,8 @@ async fn level1_agent_envelope_durable_flow_authenticates_sender() {
     let task_id = "agent-task-live-2026-07-05";
     let body = "agent-envelope-body-not-relay-visible-2026-07-05";
 
+    relay_store_raw(port, &mailbox_id, b"not-cbor-agent-burst").await;
+
     let (ok, send_output) = cli_run(&[
         "agent-send",
         "--identity",
@@ -690,8 +714,8 @@ async fn level1_agent_envelope_durable_flow_authenticates_sender() {
         "agent receive summary must count one verified message: {recv_output}"
     );
     assert!(
-        recv_output.contains("\"rejected\":0"),
-        "agent receive summary must reject none: {recv_output}"
+        recv_output.contains("\"rejected\":1"),
+        "agent receive summary must reject only the malformed relay blob: {recv_output}"
     );
 
     cli_run(&[
@@ -706,6 +730,57 @@ async fn level1_agent_envelope_durable_flow_authenticates_sender() {
         &mailbox_id,
         "--task-id",
         task_id,
+        "--kind",
+        "echo",
+        "--reply-relay",
+        &relay_addr,
+        "--reply-mailbox",
+        &reply_mailbox,
+        "--ttl-secs",
+        "3600",
+        "--body",
+        body,
+    ])
+    .await;
+
+    let (ok, replay_output) = cli_run(&[
+        "agent-receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--sender",
+        alice_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
+    assert!(
+        ok,
+        "agent-receive of replayed task must exit cleanly\nrecv: {replay_output}"
+    );
+    assert!(
+        replay_output.contains("\"duplicates\":1"),
+        "replayed task_id must be rejected by persistent dedup: {replay_output}"
+    );
+    assert!(
+        replay_output.contains("\"verified\":0"),
+        "replayed task_id must not verify again: {replay_output}"
+    );
+
+    let task_id_wrong_sender = "agent-task-wrong-sender-2026-07-05";
+    cli_run(&[
+        "agent-send",
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--task-id",
+        task_id_wrong_sender,
         "--kind",
         "echo",
         "--reply-relay",

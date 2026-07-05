@@ -164,16 +164,29 @@ What is proven:
   envelope fields
 - receiver verifies the sender card, pinned sender identity, and envelope
   signature after decrypting
-- receiver enforces TTL because the relay still has no TTL
-- receiver deduplicates `task_id` values within one receive command
+- receiver enforces TTL because the relay still has no TTL; it also rejects
+  future-dated envelopes beyond a small clock-skew window and clamps accepted TTL
+- receiver persists accepted `(pinned sender, task_id)` entries in a local
+  private seen-task cache so repeated `agent-receive` invocations reject task
+  replays
+- malformed relay blobs are counted as rejected messages and do not abort the
+  rest of the receive loop
 - Level 1 process test stores the encrypted envelope in durable relay storage,
   confirms task/body/sender/reply fields are not visible in the durable mailbox
   bytes, restarts the relay, verifies the signed envelope against Alice's pinned
-  card, rejects the same sender when Bob pins a different card, and drains once
+  card, rejects malformed relay blobs, rejects cross-invocation replay, rejects
+  the same sender when Bob pins a different card, and drains once
 
 What is not yet proven:
 
 - two-machine fleet dogfood
-- persistent receiver-side task-id dedup across process restarts
 - relay-enforced TTL
 - a real work action triggered by the received envelope
+
+Red-team follow-up (2026-07-05): the first implementation only deduped
+`task_id` values in memory per `agent-receive` invocation. That allowed a
+malicious relay or mailbox-token holder to replay the same signed burst across
+poll cycles until TTL expiry. This is now closed for the CLI surface with a
+persistent local seen-task cache. Remaining honesty caveat: this is at-most-once
+receiver behavior; if a future agent marks a task seen before executing a real
+work action and then crashes, the work may be skipped rather than retried.
