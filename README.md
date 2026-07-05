@@ -62,7 +62,7 @@ docs/        — philosophy · sts · threat-model · cryptography · transport
 | Option 2 — pool-liveness-gated multi-relay routing | `PROVIDERPOOL_MULTIRELAY_ROUTING_SEAM_PROVEN` |
 
 Workspace serial baseline at authorized commit `b2ac7f499cb4564cf746657f3b14d0252b12badf`: **429 passing, 0 failed**.
-Current HEAD serial baseline: **547 passing, 0 failed, 2 ignored** (live-mesh tests, run manually per `docs/architecture/LAN_DEV_HARNESS_RUNBOOK.md`).
+Current HEAD serial baseline: **551 passing, 0 failed, 2 ignored** (live-mesh tests, run manually per `docs/architecture/LAN_DEV_HARNESS_RUNBOOK.md`).
 
 Binaries: `scp-cli` (Endpoint A/B) and `scp-relay` (relay node). See `docs/architecture/LAN_DEV_HARNESS_RUNBOOK.md` for deployment procedure.
 

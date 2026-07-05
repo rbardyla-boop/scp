@@ -91,6 +91,21 @@ fn durable_mailbox_files(dir: &Path) -> Vec<String> {
     files
 }
 
+fn durable_mailbox_bytes(dir: &Path) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for name in durable_mailbox_files(dir) {
+        let path = dir.join(name);
+        bytes.extend(std::fs::read(path).expect("read durable relay mailbox file"));
+    }
+    bytes
+}
+
+fn bytes_contain(haystack: &[u8], needle: &str) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle.as_bytes())
+}
+
 // ── Wait for relay to be ready ────────────────────────────────────────────────
 
 async fn wait_for_relay(port: u16) {
@@ -539,7 +554,219 @@ async fn level1_durable_relay_survives_restart_when_store_dir_set() {
     cleanup(&tmp);
 }
 
-// ── Test 5: No vocabulary labels in any command output ────────────────────────
+// ── Test 5: Signed agent envelope survives durable restart ────────────────────
+
+#[tokio::test]
+async fn level1_agent_envelope_durable_flow_authenticates_sender() {
+    if !bins_exist() {
+        return;
+    }
+
+    let port = free_port();
+    let tmp = test_tmp_dir(&format!("{port}agent"));
+    let store_dir = tmp.join("relay-store");
+
+    let mut relay = Command::new(relay_bin())
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
+        .arg("--store-dir")
+        .arg(&store_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("agent durable relay spawn");
+    wait_for_relay(port).await;
+
+    let alice_key = tmp.join("alice.key");
+    let alice_card = tmp.join("alice.card");
+    let mallory_key = tmp.join("mallory.key");
+    let mallory_card = tmp.join("mallory.card");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
+
+    let (_, alice_out) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
+    std::fs::write(&alice_card, &alice_out).unwrap();
+    let alice_ops_pub = extract_json_field(&alice_out, "ops_pub").expect("alice ops_pub");
+    let (_, mallory_out) = cli_run(&["keygen", "--out", mallory_key.to_str().unwrap()]).await;
+    std::fs::write(&mallory_card, &mallory_out).unwrap();
+    let (_, bob_out) = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
+    std::fs::write(&bob_card, &bob_out).unwrap();
+
+    let (_, mailbox_out) = cli_run(&["mailbox-new"]).await;
+    let mailbox_id = extract_mailbox_id(&mailbox_out);
+    let (_, reply_mailbox_out) = cli_run(&["mailbox-new"]).await;
+    let reply_mailbox = extract_mailbox_id(&reply_mailbox_out);
+    let relay_addr = format!("127.0.0.1:{port}");
+    let task_id = "agent-task-live-2026-07-05";
+    let body = "agent-envelope-body-not-relay-visible-2026-07-05";
+
+    let (ok, send_output) = cli_run(&[
+        "agent-send",
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--task-id",
+        task_id,
+        "--kind",
+        "echo",
+        "--reply-relay",
+        &relay_addr,
+        "--reply-mailbox",
+        &reply_mailbox,
+        "--ttl-secs",
+        "3600",
+        "--body",
+        body,
+    ])
+    .await;
+    assert!(ok, "agent-send must succeed\nsend: {send_output}");
+    assert!(
+        send_output.contains("\"event\":\"agent_burst_replicated\""),
+        "agent-send must report replication summary: {send_output}"
+    );
+    assert!(
+        send_output.contains("\"count\":1"),
+        "single durable relay should store one agent burst: {send_output}"
+    );
+
+    let durable_files = durable_mailbox_files(&store_dir);
+    assert_eq!(
+        durable_files.len(),
+        1,
+        "agent envelope must be queued in exactly one durable mailbox file: {durable_files:?}"
+    );
+    let durable_bytes = durable_mailbox_bytes(&store_dir);
+    for forbidden_plaintext in [task_id, body, "echo", &alice_ops_pub, &reply_mailbox] {
+        assert!(
+            !bytes_contain(&durable_bytes, forbidden_plaintext),
+            "durable relay file must not expose agent envelope plaintext: {forbidden_plaintext}"
+        );
+    }
+
+    relay.kill().await.ok();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut relay2 = Command::new(relay_bin())
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
+        .arg("--store-dir")
+        .arg(&store_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("agent durable relay2 spawn");
+    wait_for_relay(port).await;
+
+    let (ok, recv_output) = cli_run(&[
+        "agent-receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--sender",
+        alice_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
+    assert!(ok, "agent-receive must succeed\nrecv: {recv_output}");
+    assert!(
+        recv_output.contains("\"event\":\"agent_message_verified\""),
+        "agent-receive must verify a signed envelope: {recv_output}"
+    );
+    for expected in [task_id, body, &alice_ops_pub, &reply_mailbox] {
+        assert!(
+            recv_output.contains(expected),
+            "verified agent output must contain decrypted field {expected}: {recv_output}"
+        );
+    }
+    assert!(
+        recv_output.contains("\"verified\":1"),
+        "agent receive summary must count one verified message: {recv_output}"
+    );
+    assert!(
+        recv_output.contains("\"rejected\":0"),
+        "agent receive summary must reject none: {recv_output}"
+    );
+
+    cli_run(&[
+        "agent-send",
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--task-id",
+        task_id,
+        "--kind",
+        "echo",
+        "--reply-relay",
+        &relay_addr,
+        "--reply-mailbox",
+        &reply_mailbox,
+        "--ttl-secs",
+        "3600",
+        "--body",
+        body,
+    ])
+    .await;
+
+    let (ok, wrong_sender_output) = cli_run(&[
+        "agent-receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--sender",
+        mallory_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
+    assert!(
+        ok,
+        "agent-receive with wrong pinned sender must exit cleanly\nrecv: {wrong_sender_output}"
+    );
+    assert!(
+        wrong_sender_output.contains("\"rejected\":1"),
+        "wrong pinned sender must reject the envelope: {wrong_sender_output}"
+    );
+    assert!(
+        wrong_sender_output.contains("sender does not match pinned sender card"),
+        "wrong pinned sender reason must be explicit: {wrong_sender_output}"
+    );
+
+    let (ok, recv_again) = cli_run(&[
+        "agent-receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--sender",
+        alice_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
+    assert!(ok, "second agent-receive must succeed\nrecv: {recv_again}");
+    assert!(
+        recv_again.contains("\"verified\":0"),
+        "agent durable mailbox must drain exactly once: {recv_again}"
+    );
+
+    relay2.kill().await.ok();
+    cleanup(&tmp);
+}
+
+// ── Test 6: No vocabulary labels in any command output ────────────────────────
 
 #[tokio::test]
 async fn level1_no_vocabulary_labels_in_output() {

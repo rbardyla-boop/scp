@@ -15,10 +15,12 @@
 //   receive  --identity <path>     Poll relay mailbox and decrypt all bursts.
 //            --relay <addr>
 //            --mailbox <hex>
+//   agent-send     Send a signed agent envelope inside an encrypted burst.
+//   agent-receive  Poll, decrypt, verify pinned sender, TTL-check, and task_id-dedup.
 //
 // Output events (vocabulary-neutral, no vitality label words):
 //   identity_created, mailbox_created, burst_stored, payload_decrypted,
-//   exchange_complete, error
+//   exchange_complete, agent_message_verified, agent_receive_complete, error
 
 use rand_core::{OsRng, RngCore};
 use scp_cryptography::keys::{KeyPair, PublicKey};
@@ -33,9 +35,12 @@ use scp_wire_format::signing::handshake_sig_message;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 
+const AGENT_ENVELOPE_SCHEMA_VERSION: u16 = 1;
+const AGENT_ENVELOPE_SIGNING_DOMAIN: &[u8] = b"scp-agent-envelope-v0";
+
 // ── Identity file (private, 0600) ─────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct IdentityFile {
     ops_pub: String,        // 64 hex chars (Ed25519 public)
     ops_priv: String,       // 64 hex chars (Ed25519 secret) — KEEP SECRET
@@ -47,12 +52,43 @@ struct IdentityFile {
 
 // ── Public card (shareable) ───────────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ContactCard {
     ops_pub: String,
     handshake_pub: String,
     handshake_sig: String,
     handshake_expires_at: u64,
+}
+
+// ── Agent envelope (encrypted inside a dev-harness burst) ─────────────────────
+
+#[derive(Clone, Serialize, Deserialize)]
+struct AgentReplyTo {
+    relays: Vec<String>,
+    mailbox: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct AgentEnvelopeV0 {
+    schema_version: u16,
+    task_id: String,
+    kind: String,
+    from: ContactCard,
+    reply_to: AgentReplyTo,
+    created_at: u64,
+    ttl: u64,
+    body: String,
+    sig: String,
+}
+
+struct AgentEnvelopeDraft {
+    task_id: String,
+    kind: String,
+    from: ContactCard,
+    reply_to: AgentReplyTo,
+    created_at: u64,
+    ttl: u64,
+    body: String,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -70,6 +106,8 @@ async fn main() {
         "mailbox-new" => cmd_mailbox_new(),
         "send" => cmd_send(&args[2..]).await,
         "receive" => cmd_receive(&args[2..]).await,
+        "agent-send" => cmd_agent_send(&args[2..]).await,
+        "agent-receive" => cmd_agent_receive(&args[2..]).await,
         other => {
             eprintln!("{{\"event\":\"error\",\"reason\":\"unknown command: {other}\"}}");
             std::process::exit(1);
@@ -311,6 +349,213 @@ async fn cmd_receive(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+// ── agent-send / agent-receive ────────────────────────────────────────────────
+
+async fn cmd_agent_send(args: &[String]) -> Result<(), String> {
+    let identity_path = require_arg(args, "--identity")?;
+    let card_path = require_arg(args, "--recipient")?;
+    let relay_addrs = collect_relays(args)?;
+    let mailbox_hex = require_arg(args, "--mailbox")?;
+    let task_id = require_arg(args, "--task-id")?;
+    let kind = require_arg(args, "--kind")?;
+    let reply_relays = collect_required_values(args, "--reply-relay")?;
+    let reply_mailbox = require_arg(args, "--reply-mailbox")?;
+    let ttl = parse_u64_arg(args, "--ttl-secs")?;
+    let body = require_arg(args, "--body")?;
+
+    if ttl == 0 {
+        return Err("--ttl-secs must be greater than zero".to_string());
+    }
+
+    let identity = load_identity(&identity_path)?;
+    let sender_card = contact_card_from_identity(&identity);
+    let envelope = build_agent_envelope(
+        &identity,
+        AgentEnvelopeDraft {
+            task_id,
+            kind,
+            from: sender_card,
+            reply_to: AgentReplyTo {
+                relays: reply_relays,
+                mailbox: reply_mailbox,
+            },
+            created_at: now_secs()?,
+            ttl,
+            body,
+        },
+    )?;
+    let envelope_bytes =
+        serde_json::to_vec(&envelope).map_err(|e| format!("agent envelope encode: {e}"))?;
+
+    let card = load_card(&card_path)?;
+    let mailbox_id = DevMailboxId::from_hex(&mailbox_hex).map_err(|e| format!("{e}"))?;
+    let (successes, route_id_hex) =
+        replicate_encrypted_payload(&card, &relay_addrs, &mailbox_id, &envelope_bytes).await?;
+
+    let stored = serde_json::json!({
+        "event":    "agent_burst_stored",
+        "task_id":  envelope.task_id,
+        "route_id": route_id_hex,
+    });
+    println!("{}", serde_json::to_string(&stored).unwrap());
+
+    let summary = serde_json::json!({
+        "event": "agent_burst_replicated",
+        "task_id": envelope.task_id,
+        "count": successes,
+    });
+    println!("{}", serde_json::to_string(&summary).unwrap());
+    Ok(())
+}
+
+async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
+    let identity_path = require_arg(args, "--identity")?;
+    let sender_card_path = require_arg(args, "--sender")?;
+    let relay_addrs = collect_relays(args)?;
+    let mailbox_hex = require_arg(args, "--mailbox")?;
+
+    let identity = load_identity(&identity_path)?;
+    let expected_sender = load_card(&sender_card_path)?;
+    verified_card_keys(&expected_sender).map_err(|e| format!("sender card: {e}"))?;
+    let expected_sender_ops_pub = expected_sender.ops_pub;
+    let ops_pub = parse_hex32(&identity.ops_pub, "ops_pub")?;
+    let hs_priv = parse_hex32(&identity.handshake_priv, "handshake_priv")?;
+    let mailbox_id = DevMailboxId::from_hex(&mailbox_hex).map_err(|e| format!("{e}"))?;
+    let now = now_secs()?;
+
+    let mut pool = build_delivery_pool(&relay_addrs);
+    let routes = select_relay_routes(&mut pool)?;
+
+    let mut any_reachable = false;
+    let mut seen_route_ids = std::collections::HashSet::new();
+    let mut seen_task_ids = std::collections::HashSet::new();
+    let mut verified = 0usize;
+    let mut rejected = 0usize;
+    let mut expired = 0usize;
+    let mut duplicates = 0usize;
+
+    for route in routes {
+        match route.endpoint.attempt_poll(&mailbox_id).await {
+            Ok(blobs) => {
+                any_reachable = true;
+                let _ = pool.record_delivery_success(&route.receipt);
+                for blob in &blobs {
+                    let burst = deserialize_burst(blob).map_err(|e| format!("{e}"))?;
+                    let route_id_hex = hex_encode(&burst.route_id);
+                    let plaintext = match receive_harness(&hs_priv, &ops_pub, &burst) {
+                        Ok(plaintext) => plaintext,
+                        Err(e) => {
+                            rejected += 1;
+                            let event = serde_json::json!({
+                                "event": "agent_message_rejected",
+                                "route_id": route_id_hex,
+                                "reason": format!("{e}"),
+                            });
+                            println!("{}", serde_json::to_string(&event).unwrap());
+                            continue;
+                        }
+                    };
+
+                    if !seen_route_ids.insert(route_id_hex.clone()) {
+                        duplicates += 1;
+                        continue;
+                    }
+
+                    let envelope: AgentEnvelopeV0 = match serde_json::from_slice(&plaintext) {
+                        Ok(envelope) => envelope,
+                        Err(e) => {
+                            rejected += 1;
+                            let event = serde_json::json!({
+                                "event": "agent_message_rejected",
+                                "route_id": route_id_hex,
+                                "reason": format!("agent envelope decode: {e}"),
+                            });
+                            println!("{}", serde_json::to_string(&event).unwrap());
+                            continue;
+                        }
+                    };
+
+                    if let Err(e) = verify_agent_envelope(&envelope) {
+                        rejected += 1;
+                        let event = serde_json::json!({
+                            "event": "agent_message_rejected",
+                            "route_id": route_id_hex,
+                            "task_id": envelope.task_id,
+                            "reason": e,
+                        });
+                        println!("{}", serde_json::to_string(&event).unwrap());
+                        continue;
+                    }
+
+                    if envelope.from.ops_pub != expected_sender_ops_pub {
+                        rejected += 1;
+                        let event = serde_json::json!({
+                            "event": "agent_message_rejected",
+                            "route_id": route_id_hex,
+                            "task_id": envelope.task_id,
+                            "reason": "agent envelope sender does not match pinned sender card",
+                        });
+                        println!("{}", serde_json::to_string(&event).unwrap());
+                        continue;
+                    }
+
+                    if envelope_expired(&envelope, now) {
+                        expired += 1;
+                        let event = serde_json::json!({
+                            "event": "agent_message_expired",
+                            "route_id": route_id_hex,
+                            "task_id": envelope.task_id,
+                        });
+                        println!("{}", serde_json::to_string(&event).unwrap());
+                        continue;
+                    }
+
+                    if !seen_task_ids.insert(envelope.task_id.clone()) {
+                        duplicates += 1;
+                        let event = serde_json::json!({
+                            "event": "agent_message_duplicate",
+                            "route_id": route_id_hex,
+                            "task_id": envelope.task_id,
+                        });
+                        println!("{}", serde_json::to_string(&event).unwrap());
+                        continue;
+                    }
+
+                    verified += 1;
+                    let event = serde_json::json!({
+                        "event": "agent_message_verified",
+                        "route_id": route_id_hex,
+                        "task_id": envelope.task_id,
+                        "kind": envelope.kind,
+                        "from_ops_pub": envelope.from.ops_pub,
+                        "reply_relays": envelope.reply_to.relays,
+                        "reply_mailbox": envelope.reply_to.mailbox,
+                        "body": envelope.body,
+                    });
+                    println!("{}", serde_json::to_string(&event).unwrap());
+                }
+            }
+            Err(_e) => {
+                let _ = pool.record_delivery_failure(&route.receipt);
+            }
+        }
+    }
+
+    if !any_reachable {
+        return Err("relay poll: all configured relays failed".to_string());
+    }
+
+    let event = serde_json::json!({
+        "event": "agent_receive_complete",
+        "verified": verified,
+        "rejected": rejected,
+        "expired": expired,
+        "duplicates": duplicates,
+    });
+    println!("{}", serde_json::to_string(&event).unwrap());
+    Ok(())
+}
+
 // ── Multi-relay delivery plumbing ─────────────────────────────────────────────
 
 /// Gathers every `--relay <addr>` occurrence (one or more). Repeatable flag,
@@ -368,6 +613,39 @@ fn select_relay_routes(
         .map_err(|e| format!("relay selection: {e:?}"))
 }
 
+async fn replicate_encrypted_payload(
+    recipient: &ContactCard,
+    relay_addrs: &[String],
+    mailbox_id: &DevMailboxId,
+    payload: &[u8],
+) -> Result<(usize, String), String> {
+    let (ops_pub, hs_pub) = verified_card_keys(recipient)?;
+    let burst = send_harness_direct(&ops_pub, &hs_pub, payload);
+    let route_id_hex = hex_encode(&burst.route_id);
+    let cbor = serialize_burst(&burst).map_err(|e| format!("{e}"))?;
+
+    let mut pool = build_delivery_pool(relay_addrs);
+    let routes = select_relay_routes(&mut pool)?;
+
+    let mut successes = 0usize;
+    for route in routes {
+        match route.endpoint.attempt_store(mailbox_id, &cbor).await {
+            Ok(()) => {
+                let _ = pool.record_delivery_success(&route.receipt);
+                successes += 1;
+            }
+            Err(_e) => {
+                let _ = pool.record_delivery_failure(&route.receipt);
+            }
+        }
+    }
+
+    if successes == 0 {
+        return Err("relay store: all configured relays failed".to_string());
+    }
+    Ok((successes, route_id_hex))
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn require_arg(args: &[String], flag: &str) -> Result<String, String> {
@@ -381,10 +659,45 @@ fn require_arg(args: &[String], flag: &str) -> Result<String, String> {
     Err(format!("missing required argument: {flag}"))
 }
 
+fn collect_required_values(args: &[String], flag: &str) -> Result<Vec<String>, String> {
+    let mut values = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == flag {
+            if i + 1 >= args.len() {
+                return Err(format!("missing value for {flag}"));
+            }
+            values.push(args[i + 1].clone());
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    if values.is_empty() {
+        return Err(format!("missing required argument: {flag}"));
+    }
+    Ok(values)
+}
+
+fn parse_u64_arg(args: &[String], flag: &str) -> Result<u64, String> {
+    require_arg(args, flag)?
+        .parse::<u64>()
+        .map_err(|e| format!("{flag}: expected unsigned integer: {e}"))
+}
+
 fn load_identity(path: &str) -> Result<IdentityFile, String> {
     let contents =
         std::fs::read_to_string(path).map_err(|e| format!("read identity file '{path}': {e}"))?;
     serde_json::from_str(&contents).map_err(|e| format!("parse identity file '{path}': {e}"))
+}
+
+fn contact_card_from_identity(identity: &IdentityFile) -> ContactCard {
+    ContactCard {
+        ops_pub: identity.ops_pub.clone(),
+        handshake_pub: identity.handshake_pub.clone(),
+        handshake_sig: identity.handshake_sig.clone(),
+        handshake_expires_at: identity.handshake_expires_at,
+    }
 }
 
 fn load_card(path: &str) -> Result<ContactCard, String> {
@@ -414,6 +727,115 @@ fn load_card(path: &str) -> Result<ContactCard, String> {
     })
 }
 
+fn verified_card_keys(card: &ContactCard) -> Result<([u8; 32], [u8; 32]), String> {
+    let ops_pub = parse_hex32(&card.ops_pub, "ops_pub")?;
+    let hs_pub = parse_hex32(&card.handshake_pub, "handshake_pub")?;
+
+    let sig_msg = handshake_sig_message(&hs_pub, card.handshake_expires_at);
+    let sig = parse_hex64(&card.handshake_sig, "handshake_sig")?;
+    if !PublicKey(ops_pub).verify(&sig_msg, &sig) {
+        return Err("handshake key signature verification failed".to_string());
+    }
+
+    Ok((ops_pub, hs_pub))
+}
+
+fn build_agent_envelope(
+    identity: &IdentityFile,
+    draft: AgentEnvelopeDraft,
+) -> Result<AgentEnvelopeV0, String> {
+    let ops_pub = parse_hex32(&identity.ops_pub, "ops_pub")?;
+    let ops_priv = parse_hex32(&identity.ops_priv, "ops_priv")?;
+    let keypair = KeyPair {
+        public: ops_pub,
+        secret: ops_priv,
+    };
+
+    let mut envelope = AgentEnvelopeV0 {
+        schema_version: AGENT_ENVELOPE_SCHEMA_VERSION,
+        task_id: draft.task_id,
+        kind: draft.kind,
+        from: draft.from,
+        reply_to: draft.reply_to,
+        created_at: draft.created_at,
+        ttl: draft.ttl,
+        body: draft.body,
+        sig: String::new(),
+    };
+    envelope.sig = hex_encode(&keypair.sign(&agent_envelope_signing_bytes(&envelope)));
+    Ok(envelope)
+}
+
+fn verify_agent_envelope(envelope: &AgentEnvelopeV0) -> Result<(), String> {
+    if envelope.schema_version != AGENT_ENVELOPE_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported agent envelope schema_version {}",
+            envelope.schema_version
+        ));
+    }
+    if envelope.ttl == 0 {
+        return Err("agent envelope ttl must be greater than zero".to_string());
+    }
+
+    verified_card_keys(&envelope.from).map_err(|e| format!("sender card: {e}"))?;
+    let from_ops_pub = parse_hex32(&envelope.from.ops_pub, "from.ops_pub")?;
+    let sig = parse_hex64(&envelope.sig, "sig")?;
+    if !PublicKey(from_ops_pub).verify(&agent_envelope_signing_bytes(envelope), &sig) {
+        return Err("agent envelope signature verification failed".to_string());
+    }
+
+    Ok(())
+}
+
+fn envelope_expired(envelope: &AgentEnvelopeV0, now: u64) -> bool {
+    match envelope.created_at.checked_add(envelope.ttl) {
+        Some(expires_at) => now > expires_at,
+        None => true,
+    }
+}
+
+fn agent_envelope_signing_bytes(envelope: &AgentEnvelopeV0) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(AGENT_ENVELOPE_SIGNING_DOMAIN);
+    push_u16(&mut out, envelope.schema_version);
+    push_str(&mut out, &envelope.task_id);
+    push_str(&mut out, &envelope.kind);
+    push_contact_card(&mut out, &envelope.from);
+    push_reply_to(&mut out, &envelope.reply_to);
+    push_u64(&mut out, envelope.created_at);
+    push_u64(&mut out, envelope.ttl);
+    push_str(&mut out, &envelope.body);
+    out
+}
+
+fn push_contact_card(out: &mut Vec<u8>, card: &ContactCard) {
+    push_str(out, &card.ops_pub);
+    push_str(out, &card.handshake_pub);
+    push_str(out, &card.handshake_sig);
+    push_u64(out, card.handshake_expires_at);
+}
+
+fn push_reply_to(out: &mut Vec<u8>, reply_to: &AgentReplyTo) {
+    push_u64(out, reply_to.relays.len() as u64);
+    for relay in &reply_to.relays {
+        push_str(out, relay);
+    }
+    push_str(out, &reply_to.mailbox);
+}
+
+fn push_str(out: &mut Vec<u8>, value: &str) {
+    push_u64(out, value.len() as u64);
+    out.extend_from_slice(value.as_bytes());
+}
+
+fn push_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
 fn parse_hex32(hex: &str, field: &str) -> Result<[u8; 32], String> {
     let bytes = hex_decode(hex).map_err(|e| format!("{field}: {e}"))?;
     if bytes.len() != 32 {
@@ -422,6 +844,23 @@ fn parse_hex32(hex: &str, field: &str) -> Result<[u8; 32], String> {
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     Ok(arr)
+}
+
+fn parse_hex64(hex: &str, field: &str) -> Result<[u8; 64], String> {
+    let bytes = hex_decode(hex).map_err(|e| format!("{field}: {e}"))?;
+    if bytes.len() != 64 {
+        return Err(format!("{field}: expected 64 bytes, got {}", bytes.len()));
+    }
+    let mut arr = [0u8; 64];
+    arr.copy_from_slice(&bytes);
+    Ok(arr)
+}
+
+fn now_secs() -> Result<u64, String> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("system time before unix epoch: {e}"))
+        .map(|d| d.as_secs())
 }
 
 fn write_secret_file(path: &str, contents: &[u8]) -> std::io::Result<()> {
@@ -446,6 +885,21 @@ mod tests {
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn test_identity() -> IdentityFile {
+        let ops_kp = KeyPair::generate();
+        let (hs_priv, hs_pub) = x25519_generate_keypair();
+        let expires_at = 1_000_000;
+        let sig = ops_kp.sign(&handshake_sig_message(&hs_pub, expires_at));
+        IdentityFile {
+            ops_pub: hex_encode(&ops_kp.public),
+            ops_priv: hex_encode(&ops_kp.secret),
+            handshake_pub: hex_encode(&hs_pub),
+            handshake_priv: hex_encode(&hs_priv),
+            handshake_sig: hex_encode(&sig),
+            handshake_expires_at: expires_at,
+        }
     }
 
     #[test]
@@ -480,5 +934,64 @@ mod tests {
     fn collect_relays_errors_on_missing_value() {
         let a = args(&["--relay"]);
         assert!(collect_relays(&a).is_err());
+    }
+
+    #[test]
+    fn collect_required_values_gathers_repeated_flag() {
+        let a = args(&["--reply-relay", "a", "--reply-relay", "b"]);
+        assert_eq!(
+            collect_required_values(&a, "--reply-relay").unwrap(),
+            vec!["a", "b"]
+        );
+    }
+
+    #[test]
+    fn agent_envelope_signature_verifies_and_rejects_tamper() {
+        let identity = test_identity();
+        let from = contact_card_from_identity(&identity);
+        let mut envelope = build_agent_envelope(
+            &identity,
+            AgentEnvelopeDraft {
+                task_id: "task-1".to_string(),
+                kind: "echo".to_string(),
+                from,
+                reply_to: AgentReplyTo {
+                    relays: vec!["127.0.0.1:7700".to_string()],
+                    mailbox: "a".repeat(64),
+                },
+                created_at: 1_000,
+                ttl: 60,
+                body: "hello".to_string(),
+            },
+        )
+        .unwrap();
+
+        verify_agent_envelope(&envelope).unwrap();
+        envelope.body = "tampered".to_string();
+        assert!(verify_agent_envelope(&envelope).is_err());
+    }
+
+    #[test]
+    fn agent_envelope_expiry_is_receiver_enforced() {
+        let identity = test_identity();
+        let envelope = build_agent_envelope(
+            &identity,
+            AgentEnvelopeDraft {
+                task_id: "task-2".to_string(),
+                kind: "echo".to_string(),
+                from: contact_card_from_identity(&identity),
+                reply_to: AgentReplyTo {
+                    relays: vec!["127.0.0.1:7700".to_string()],
+                    mailbox: "b".repeat(64),
+                },
+                created_at: 1_000,
+                ttl: 10,
+                body: "hello".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert!(!envelope_expired(&envelope, 1_010));
+        assert!(envelope_expired(&envelope, 1_011));
     }
 }

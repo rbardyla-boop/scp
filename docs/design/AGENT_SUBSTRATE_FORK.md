@@ -1,7 +1,7 @@
 # SCP as an Agent-Communication Substrate — Fork Record
 
-**Status**: Entered planning fork. Logged 2026-07-05. No agent-substrate code
-has been authorized or written yet.
+**Status**: Entered implementation fork. Logged 2026-07-05. Slice 1 envelope
+code is landed in the dev-harness CLI; fleet-node dogfood has not run yet.
 **Decision**: Build the private fleet-agent bus path before the human Corridor
 Preview, while keeping the same dev-harness honesty line.
 **Deployment authorization**: Not granted. Same dev-harness honesty line as all SCP planning.
@@ -82,9 +82,8 @@ Operator chose **B-agent first** on 2026-07-05.
 ## Do-not-do-yet
 
 Do not build discovery, an open network, an SDK, inference sharing, or a generic
-agent protocol. The only authorized shape is the smallest private fleet-bus
-slice: one authenticated envelope over the existing corridor, then one real
-dogfood task if the envelope proves clean.
+agent protocol. The only authorized shape beyond the landed envelope is one
+real dogfood task over the private fleet if the envelope proof remains clean.
 
 ---
 
@@ -147,10 +146,34 @@ workload, not another demo) is the immediate follow-on, NOT slice 1.
 ### Slice 1 done when
 
 - The envelope is signed by the sender and verified by the receiver before any
-  work action is considered.
+  work action is considered, against a pinned expected sender card.
 - The sender card/public key needed for replies is available inside the
   decrypted envelope or through a pinned local card.
 - Expired envelopes are rejected by the receiving agent.
 - Duplicate `task_id` values are idempotent at the receiver.
 - Relay-visible bytes remain opaque bursts; envelope fields do not appear in
   relay logs, durable filenames, or trace telemetry.
+
+### Slice 1 implementation note — 2026-07-05
+
+Implemented in `scp-cli` as `agent-send` and `agent-receive`.
+
+What is proven:
+
+- sender signs a deterministic, domain-separated byte encoding of the unsigned
+  envelope fields
+- receiver verifies the sender card, pinned sender identity, and envelope
+  signature after decrypting
+- receiver enforces TTL because the relay still has no TTL
+- receiver deduplicates `task_id` values within one receive command
+- Level 1 process test stores the encrypted envelope in durable relay storage,
+  confirms task/body/sender/reply fields are not visible in the durable mailbox
+  bytes, restarts the relay, verifies the signed envelope against Alice's pinned
+  card, rejects the same sender when Bob pins a different card, and drains once
+
+What is not yet proven:
+
+- two-machine fleet dogfood
+- persistent receiver-side task-id dedup across process restarts
+- relay-enforced TTL
+- a real work action triggered by the received envelope
