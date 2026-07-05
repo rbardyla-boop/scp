@@ -621,6 +621,7 @@ async fn level1_agent_envelope_durable_flow_authenticates_sender() {
     let relay_addr = format!("127.0.0.1:{port}");
     let task_id = "agent-task-live-2026-07-05";
     let body = "agent-envelope-body-not-relay-visible-2026-07-05";
+    let action_dir = tmp.join("agent-actions");
 
     relay_store_raw(port, &mailbox_id, b"not-cbor-agent-burst").await;
 
@@ -766,6 +767,110 @@ async fn level1_agent_envelope_durable_flow_authenticates_sender() {
     assert!(
         replay_output.contains("\"verified\":0"),
         "replayed task_id must not verify again: {replay_output}"
+    );
+
+    let task_id_recovery = "agent-task-reserve-recover-2026-07-05";
+    let recovery_body = "journaled-action-body-2026-07-05";
+    cli_run(&[
+        "agent-send",
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--task-id",
+        task_id_recovery,
+        "--kind",
+        "echo",
+        "--reply-relay",
+        &relay_addr,
+        "--reply-mailbox",
+        &reply_mailbox,
+        "--ttl-secs",
+        "3600",
+        "--body",
+        recovery_body,
+    ])
+    .await;
+
+    let (ok, reserve_only_output) = cli_run(&[
+        "agent-receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--sender",
+        alice_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--reserve-only",
+    ])
+    .await;
+    assert!(
+        ok,
+        "reserve-only receive must exit cleanly\nrecv: {reserve_only_output}"
+    );
+    assert!(
+        reserve_only_output.contains("\"event\":\"agent_task_reserved\""),
+        "reserve-only receive must journal the task before action: {reserve_only_output}"
+    );
+    assert!(
+        reserve_only_output.contains("\"verified\":0"),
+        "reserve-only receive must not execute the task: {reserve_only_output}"
+    );
+    assert!(
+        reserve_only_output.contains("\"acked\":0"),
+        "reserve-only receive must leave the task unacked: {reserve_only_output}"
+    );
+
+    let (ok, recovered_output) = cli_run(&[
+        "agent-receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--sender",
+        alice_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--execute-echo-dir",
+        action_dir.to_str().unwrap(),
+    ])
+    .await;
+    assert!(
+        ok,
+        "journal recovery receive must exit cleanly\nrecv: {recovered_output}"
+    );
+    for expected in [
+        "\"event\":\"agent_task_recovered\"",
+        "\"event\":\"agent_message_verified\"",
+        "\"event\":\"agent_task_executed\"",
+        "\"event\":\"agent_task_acked\"",
+        "\"recovered\":1",
+        "\"executed\":1",
+        "\"acked\":1",
+    ] {
+        assert!(
+            recovered_output.contains(expected),
+            "journal recovery output missing {expected}: {recovered_output}"
+        );
+    }
+    let action_files: Vec<_> = std::fs::read_dir(&action_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(
+        action_files.len(),
+        1,
+        "journal recovery must write exactly one idempotent action file"
+    );
+    let action_body = std::fs::read_to_string(&action_files[0]).unwrap();
+    assert_eq!(
+        action_body, recovery_body,
+        "journal recovery action file must contain the task body"
     );
 
     let task_id_wrong_sender = "agent-task-wrong-sender-2026-07-05";

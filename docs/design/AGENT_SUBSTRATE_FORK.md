@@ -41,8 +41,15 @@ Honest gap list (must NOT be hand-waved):
 - **Message schemas** — SCP moves opaque bytes. "Communicate / task-share" needs an
   application protocol on top (task/RPC/capability semantics). SCP is the private pipe *under*
   something like A2A/MCP, not a replacement for them.
+- **Executor semantics** — the CLI now has reserve/execute/ack journaling for the
+  built-in `echo` action, including reserve-only recovery after relay drain. A real
+  external agent executor still needs to bind its own side effects to that journal
+  before this is a general work bus.
 - **Discovery** — agents cannot find each other; only manual card exchange today.
 - **Key storage** — plaintext dev key files; needs a keystore.
+- **Receiver journal at rest** — the private task journal stores decrypted task
+  envelopes locally so work can recover after relay drain. It is `0700`/`0600`
+  dev-harness state, not a production encrypted job store.
 - **Internet transport** — LAN/Tailscale only; "anyone can join over the internet" needs
   NAT/transport work.
 - **Open-membership abuse** — Sybil/spam defense beyond the existing Ed25519 admission challenge.
@@ -167,26 +174,41 @@ What is proven:
 - receiver enforces TTL because the relay still has no TTL; it also rejects
   future-dated envelopes beyond a small clock-skew window and clamps accepted TTL
 - receiver persists accepted `(pinned sender, task_id)` entries in a local
-  private seen-task cache so repeated `agent-receive` invocations reject task
+  private task journal; repeated `agent-receive` invocations reject acked task
   replays
+- receiver reserves a verified task before any action is executed, then records
+  executed and acked states in the same private journal
+- the receiver-side journal stores decrypted task envelope/body locally; this is
+  not relay-visible, but it is plaintext dev-harness state on the receiver
+- `agent-receive --reserve-only` can simulate the crash window after relay drain;
+  the next receive recovers the reserved task from the journal and can execute it
 - malformed relay blobs are counted as rejected messages and do not abort the
   rest of the receive loop
 - Level 1 process test stores the encrypted envelope in durable relay storage,
   confirms task/body/sender/reply fields are not visible in the durable mailbox
   bytes, restarts the relay, verifies the signed envelope against Alice's pinned
   card, rejects malformed relay blobs, rejects cross-invocation replay, rejects
-  the same sender when Bob pins a different card, and drains once
+  the same sender when Bob pins a different card, drains once, reserves a task
+  without executing it, recovers it from the private journal after the relay has
+  drained, writes exactly one built-in `echo` action file, and acks it
 
 What is not yet proven:
 
 - two-machine fleet dogfood
 - relay-enforced TTL
-- a real work action triggered by the received envelope
+- a real external agent action triggered by the received envelope
 
 Red-team follow-up (2026-07-05): the first implementation only deduped
 `task_id` values in memory per `agent-receive` invocation. That allowed a
 malicious relay or mailbox-token holder to replay the same signed burst across
 poll cycles until TTL expiry. This is now closed for the CLI surface with a
-persistent local seen-task cache. Remaining honesty caveat: this is at-most-once
-receiver behavior; if a future agent marks a task seen before executing a real
-work action and then crashes, the work may be skipped rather than retried.
+persistent local task journal.
+
+Executor follow-up (2026-07-05): the replay-cache fix still had a sharper
+failure mode: "marked seen, then crash before action" could silently lose work
+because relay polling drains the mailbox. The CLI now reserves the decrypted,
+verified task to a private journal before action, supports a `--reserve-only`
+crash-window simulation, resumes reserved tasks even when the relay mailbox is
+empty, executes the built-in `echo` action idempotently, and acks only after the
+action step succeeds. Remaining honesty caveat: this proves the journal contract
+for a built-in idempotent action, not arbitrary external agent side effects.

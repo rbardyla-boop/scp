@@ -16,12 +16,14 @@
 //            --relay <addr>
 //            --mailbox <hex>
 //   agent-send     Send a signed agent envelope inside an encrypted burst.
-//   agent-receive  Poll, decrypt, verify pinned sender, TTL-check, and task_id-dedup.
-//                  Uses <identity>.agent-seen by default; override with --seen-dir <path>.
+//   agent-receive  Poll, decrypt, verify pinned sender, TTL-check, and journal tasks.
+//                  Uses <identity>.agent-journal by default; override with --journal-dir <path>.
 //
 // Output events (vocabulary-neutral, no vitality label words):
 //   identity_created, mailbox_created, burst_stored, payload_decrypted,
-//   exchange_complete, agent_message_verified, agent_receive_complete, error
+//   exchange_complete, agent_task_reserved, agent_task_recovered,
+//   agent_message_verified, agent_task_executed, agent_task_acked,
+//   agent_receive_complete, error
 
 use rand_core::{OsRng, RngCore};
 use scp_cryptography::keys::{KeyPair, PublicKey};
@@ -39,8 +41,9 @@ use std::path::{Path, PathBuf};
 
 const AGENT_ENVELOPE_SCHEMA_VERSION: u16 = 1;
 const AGENT_ENVELOPE_SIGNING_DOMAIN: &[u8] = b"scp-agent-envelope-v0";
-const AGENT_SEEN_TASK_DOMAIN: &[u8] = b"scp-agent-seen-task-v1";
-const AGENT_SEEN_SALT_FILE: &str = "seen.salt";
+const AGENT_TASK_JOURNAL_DOMAIN: &[u8] = b"scp-agent-task-journal-v1";
+const AGENT_TASK_JOURNAL_SALT_FILE: &str = "journal.salt";
+const AGENT_TASK_RECORD_VERSION: u16 = 1;
 const MAX_AGENT_ENVELOPE_TTL_SECS: u64 = 86_400;
 const MAX_AGENT_ENVELOPE_FUTURE_SKEW_SECS: u64 = 300;
 
@@ -97,9 +100,57 @@ struct AgentEnvelopeDraft {
     body: String,
 }
 
-struct SeenTaskStore {
+struct AgentTaskJournal {
     dir: PathBuf,
     salt: [u8; 32],
+}
+
+#[derive(Clone)]
+struct AgentReceiveOptions {
+    journal_dir: PathBuf,
+    execute_echo_dir: Option<PathBuf>,
+    reserve_only: bool,
+}
+
+#[derive(Default)]
+struct AgentReceiveCounters {
+    verified: usize,
+    rejected: usize,
+    expired: usize,
+    duplicates: usize,
+    reserved: usize,
+    recovered: usize,
+    executed: usize,
+    acked: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum AgentTaskStatus {
+    Reserved,
+    Executed,
+    Acked,
+    Expired,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct AgentTaskRecord {
+    record_version: u16,
+    status: AgentTaskStatus,
+    sender_ops_pub: String,
+    task_id: String,
+    route_id: String,
+    reserved_at: u64,
+    expires_at: u64,
+    executed_at: Option<u64>,
+    acked_at: Option<u64>,
+    envelope: AgentEnvelopeV0,
+}
+
+enum AgentTaskReserve {
+    New(AgentTaskRecord),
+    Pending(AgentTaskRecord),
+    Duplicate,
 }
 
 enum AgentEnvelopeTimeStatus {
@@ -430,9 +481,7 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
     let sender_card_path = require_arg(args, "--sender")?;
     let relay_addrs = collect_relays(args)?;
     let mailbox_hex = require_arg(args, "--mailbox")?;
-    let seen_dir = optional_arg(args, "--seen-dir")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_agent_seen_dir(&identity_path));
+    let options = agent_receive_options(args, &identity_path);
 
     let identity = load_identity(&identity_path)?;
     let expected_sender = load_card(&sender_card_path)?;
@@ -442,17 +491,24 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
     let hs_priv = parse_hex32(&identity.handshake_priv, "handshake_priv")?;
     let mailbox_id = DevMailboxId::from_hex(&mailbox_hex).map_err(|e| format!("{e}"))?;
     let now = now_secs()?;
-    let seen_tasks = SeenTaskStore::open(seen_dir, now)?;
+    let journal = AgentTaskJournal::open(options.journal_dir.clone(), now)?;
 
     let mut pool = build_delivery_pool(&relay_addrs);
     let routes = select_relay_routes(&mut pool)?;
 
+    let mut counters = AgentReceiveCounters::default();
+    let mut handled_task_keys = std::collections::HashSet::new();
+    process_pending_agent_tasks(
+        &journal,
+        &expected_sender_ops_pub,
+        now,
+        &options,
+        &mut counters,
+        &mut handled_task_keys,
+    )?;
+
     let mut any_reachable = false;
     let mut seen_route_ids = std::collections::HashSet::new();
-    let mut verified = 0usize;
-    let mut rejected = 0usize;
-    let mut expired = 0usize;
-    let mut duplicates = 0usize;
 
     for route in routes {
         match route.endpoint.attempt_poll(&mailbox_id).await {
@@ -463,7 +519,7 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                     let burst = match deserialize_burst(blob) {
                         Ok(burst) => burst,
                         Err(e) => {
-                            rejected += 1;
+                            counters.rejected += 1;
                             let event = serde_json::json!({
                                 "event": "agent_message_rejected",
                                 "reason": format!("{e}"),
@@ -476,7 +532,7 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                     let plaintext = match receive_harness(&hs_priv, &ops_pub, &burst) {
                         Ok(plaintext) => plaintext,
                         Err(e) => {
-                            rejected += 1;
+                            counters.rejected += 1;
                             let event = serde_json::json!({
                                 "event": "agent_message_rejected",
                                 "route_id": route_id_hex,
@@ -488,14 +544,14 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                     };
 
                     if !seen_route_ids.insert(route_id_hex.clone()) {
-                        duplicates += 1;
+                        counters.duplicates += 1;
                         continue;
                     }
 
                     let envelope: AgentEnvelopeV0 = match serde_json::from_slice(&plaintext) {
                         Ok(envelope) => envelope,
                         Err(e) => {
-                            rejected += 1;
+                            counters.rejected += 1;
                             let event = serde_json::json!({
                                 "event": "agent_message_rejected",
                                 "route_id": route_id_hex,
@@ -507,7 +563,7 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                     };
 
                     if let Err(e) = verify_agent_envelope(&envelope) {
-                        rejected += 1;
+                        counters.rejected += 1;
                         let event = serde_json::json!({
                             "event": "agent_message_rejected",
                             "route_id": route_id_hex,
@@ -519,7 +575,7 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                     }
 
                     if envelope.from.ops_pub != expected_sender_ops_pub {
-                        rejected += 1;
+                        counters.rejected += 1;
                         let event = serde_json::json!({
                             "event": "agent_message_rejected",
                             "route_id": route_id_hex,
@@ -533,7 +589,7 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                     let expires_at = match agent_envelope_time_status(&envelope, now) {
                         AgentEnvelopeTimeStatus::Current { expires_at } => expires_at,
                         AgentEnvelopeTimeStatus::Expired => {
-                            expired += 1;
+                            counters.expired += 1;
                             let event = serde_json::json!({
                                 "event": "agent_message_expired",
                                 "route_id": route_id_hex,
@@ -543,7 +599,7 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                             continue;
                         }
                         AgentEnvelopeTimeStatus::Invalid(reason) => {
-                            rejected += 1;
+                            counters.rejected += 1;
                             let event = serde_json::json!({
                                 "event": "agent_message_rejected",
                                 "route_id": route_id_hex,
@@ -555,34 +611,56 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
                         }
                     };
 
-                    match seen_tasks.claim(&expected_sender_ops_pub, &envelope.task_id, expires_at)
-                    {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            duplicates += 1;
+                    let task_id_for_duplicate = envelope.task_id.clone();
+                    match journal.reserve(
+                        &expected_sender_ops_pub,
+                        route_id_hex.clone(),
+                        envelope,
+                        expires_at,
+                        now,
+                    ) {
+                        Ok(AgentTaskReserve::New(record)) => {
+                            let task_key =
+                                journal.record_key(&record.sender_ops_pub, &record.task_id);
+                            handled_task_keys.insert(task_key);
+                            counters.reserved += 1;
+                            emit_agent_task_reserved(&record, false);
+                            process_agent_task_record(
+                                &journal,
+                                record,
+                                now,
+                                &options,
+                                &mut counters,
+                            )?;
+                        }
+                        Ok(AgentTaskReserve::Pending(record)) => {
+                            let task_key =
+                                journal.record_key(&record.sender_ops_pub, &record.task_id);
+                            if !handled_task_keys.insert(task_key) {
+                                counters.duplicates += 1;
+                                continue;
+                            }
+                            counters.recovered += 1;
+                            emit_agent_task_reserved(&record, true);
+                            process_agent_task_record(
+                                &journal,
+                                record,
+                                now,
+                                &options,
+                                &mut counters,
+                            )?;
+                        }
+                        Ok(AgentTaskReserve::Duplicate) => {
+                            counters.duplicates += 1;
                             let event = serde_json::json!({
                                 "event": "agent_message_duplicate",
                                 "route_id": route_id_hex,
-                                "task_id": envelope.task_id,
+                                "task_id": task_id_for_duplicate,
                             });
                             println!("{}", serde_json::to_string(&event).unwrap());
-                            continue;
                         }
-                        Err(e) => return Err(format!("agent seen-task store: {e}")),
+                        Err(e) => return Err(format!("agent task journal: {e}")),
                     }
-
-                    verified += 1;
-                    let event = serde_json::json!({
-                        "event": "agent_message_verified",
-                        "route_id": route_id_hex,
-                        "task_id": envelope.task_id,
-                        "kind": envelope.kind,
-                        "from_ops_pub": envelope.from.ops_pub,
-                        "reply_relays": envelope.reply_to.relays,
-                        "reply_mailbox": envelope.reply_to.mailbox,
-                        "body": envelope.body,
-                    });
-                    println!("{}", serde_json::to_string(&event).unwrap());
                 }
             }
             Err(_e) => {
@@ -597,10 +675,14 @@ async fn cmd_agent_receive(args: &[String]) -> Result<(), String> {
 
     let event = serde_json::json!({
         "event": "agent_receive_complete",
-        "verified": verified,
-        "rejected": rejected,
-        "expired": expired,
-        "duplicates": duplicates,
+        "verified": counters.verified,
+        "rejected": counters.rejected,
+        "expired": counters.expired,
+        "duplicates": counters.duplicates,
+        "reserved": counters.reserved,
+        "recovered": counters.recovered,
+        "executed": counters.executed,
+        "acked": counters.acked,
     });
     println!("{}", serde_json::to_string(&event).unwrap());
     Ok(())
@@ -915,101 +997,414 @@ fn push_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
-impl SeenTaskStore {
-    fn open(dir: PathBuf, now: u64) -> Result<Self, String> {
-        std::fs::create_dir_all(&dir).map_err(|e| format!("create seen-task dir: {e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-                .map_err(|e| format!("restrict seen-task dir permissions: {e}"))?;
+fn agent_receive_options(args: &[String], identity_path: &str) -> AgentReceiveOptions {
+    let journal_dir = optional_arg(args, "--journal-dir")
+        .or_else(|| optional_arg(args, "--seen-dir"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_agent_journal_dir(identity_path));
+    let execute_echo_dir = optional_arg(args, "--execute-echo-dir").map(PathBuf::from);
+    let reserve_only = has_flag(args, "--reserve-only");
+
+    AgentReceiveOptions {
+        journal_dir,
+        execute_echo_dir,
+        reserve_only,
+    }
+}
+
+fn has_flag(args: &[String], flag: &str) -> bool {
+    args.iter().any(|arg| arg == flag)
+}
+
+fn process_pending_agent_tasks(
+    journal: &AgentTaskJournal,
+    expected_sender_ops_pub: &str,
+    now: u64,
+    options: &AgentReceiveOptions,
+    counters: &mut AgentReceiveCounters,
+    handled_task_keys: &mut std::collections::HashSet<String>,
+) -> Result<(), String> {
+    for record in journal.pending_for_sender(expected_sender_ops_pub)? {
+        let task_key = journal.record_key(&record.sender_ops_pub, &record.task_id);
+        if !handled_task_keys.insert(task_key) {
+            continue;
         }
-        let salt = load_or_create_seen_salt(&dir)?;
+        counters.recovered += 1;
+        emit_agent_task_reserved(&record, true);
+        process_agent_task_record(journal, record, now, options, counters)?;
+    }
+    Ok(())
+}
+
+fn process_agent_task_record(
+    journal: &AgentTaskJournal,
+    record: AgentTaskRecord,
+    now: u64,
+    options: &AgentReceiveOptions,
+    counters: &mut AgentReceiveCounters,
+) -> Result<(), String> {
+    if now > record.expires_at {
+        counters.expired += 1;
+        let expired = journal.mark_status(&record, AgentTaskStatus::Expired, now)?;
+        let event = serde_json::json!({
+            "event": "agent_message_expired",
+            "route_id": expired.route_id,
+            "task_id": expired.task_id,
+        });
+        println!("{}", serde_json::to_string(&event).unwrap());
+        return Ok(());
+    }
+
+    if options.reserve_only {
+        return Ok(());
+    }
+
+    emit_agent_message_verified(&record);
+    counters.verified += 1;
+
+    let record = if record.status == AgentTaskStatus::Reserved {
+        execute_agent_task_action(journal, &record, options)?;
+        let executed = journal.mark_status(&record, AgentTaskStatus::Executed, now)?;
+        counters.executed += 1;
+        emit_agent_task_executed(journal, &executed, options);
+        executed
+    } else {
+        record
+    };
+
+    if record.status == AgentTaskStatus::Executed {
+        let acked = journal.mark_status(&record, AgentTaskStatus::Acked, now)?;
+        counters.acked += 1;
+        let event = serde_json::json!({
+            "event": "agent_task_acked",
+            "route_id": acked.route_id,
+            "task_id": acked.task_id,
+        });
+        println!("{}", serde_json::to_string(&event).unwrap());
+    }
+
+    Ok(())
+}
+
+fn execute_agent_task_action(
+    journal: &AgentTaskJournal,
+    record: &AgentTaskRecord,
+    options: &AgentReceiveOptions,
+) -> Result<(), String> {
+    let Some(dir) = &options.execute_echo_dir else {
+        return Ok(());
+    };
+
+    if record.envelope.kind != "echo" {
+        return Err(format!(
+            "unsupported agent task kind for --execute-echo-dir: {}",
+            record.envelope.kind
+        ));
+    }
+
+    std::fs::create_dir_all(dir).map_err(|e| format!("create agent action dir: {e}"))?;
+    restrict_dir_private(dir)?;
+    let output_path = echo_action_path(journal, record, dir);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output_path)
+    {
+        Ok(mut file) => {
+            restrict_file_private(&file).map_err(|e| format!("restrict action file: {e}"))?;
+            file.write_all(record.envelope.body.as_bytes())
+                .map_err(|e| format!("write action file: {e}"))?;
+            file.sync_all()
+                .map_err(|e| format!("sync action file: {e}"))?;
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(format!("create action file: {e}")),
+    }
+}
+
+fn emit_agent_task_reserved(record: &AgentTaskRecord, recovered: bool) {
+    let event = serde_json::json!({
+        "event": if recovered { "agent_task_recovered" } else { "agent_task_reserved" },
+        "route_id": record.route_id,
+        "task_id": record.task_id,
+    });
+    println!("{}", serde_json::to_string(&event).unwrap());
+}
+
+fn emit_agent_message_verified(record: &AgentTaskRecord) {
+    let envelope = &record.envelope;
+    let event = serde_json::json!({
+        "event": "agent_message_verified",
+        "route_id": record.route_id,
+        "task_id": envelope.task_id,
+        "kind": envelope.kind,
+        "from_ops_pub": envelope.from.ops_pub,
+        "reply_relays": envelope.reply_to.relays,
+        "reply_mailbox": envelope.reply_to.mailbox,
+        "body": envelope.body,
+    });
+    println!("{}", serde_json::to_string(&event).unwrap());
+}
+
+fn emit_agent_task_executed(
+    journal: &AgentTaskJournal,
+    record: &AgentTaskRecord,
+    options: &AgentReceiveOptions,
+) {
+    let mut event = serde_json::json!({
+        "event": "agent_task_executed",
+        "route_id": record.route_id,
+        "task_id": record.task_id,
+        "action": if options.execute_echo_dir.is_some() { "echo_file" } else { "inspect" },
+    });
+    if let Some(dir) = &options.execute_echo_dir {
+        event["path"] = serde_json::Value::String(
+            echo_action_path(journal, record, dir)
+                .to_string_lossy()
+                .to_string(),
+        );
+    }
+    println!("{}", serde_json::to_string(&event).unwrap());
+}
+
+fn echo_action_path(journal: &AgentTaskJournal, record: &AgentTaskRecord, dir: &Path) -> PathBuf {
+    let key = journal.record_key(&record.sender_ops_pub, &record.task_id);
+    dir.join(format!("{key}.echo.txt"))
+}
+
+impl AgentTaskJournal {
+    fn open(dir: PathBuf, now: u64) -> Result<Self, String> {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("create task-journal dir: {e}"))?;
+        restrict_dir_private(&dir)?;
+        let salt = load_or_create_journal_salt(&dir)?;
         let store = Self { dir, salt };
         store.purge_expired(now)?;
         Ok(store)
     }
 
-    fn claim(&self, sender_ops_pub: &str, task_id: &str, expires_at: u64) -> std::io::Result<bool> {
-        let path = self.task_path(sender_ops_pub, task_id);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    fn reserve(
+        &self,
+        sender_ops_pub: &str,
+        route_id: String,
+        envelope: AgentEnvelopeV0,
+        expires_at: u64,
+        now: u64,
+    ) -> Result<AgentTaskReserve, String> {
+        let path = self.task_path(sender_ops_pub, &envelope.task_id);
+        if path.exists() {
+            let record = self.read_record(&path)?;
+            return Ok(match record.status {
+                AgentTaskStatus::Reserved | AgentTaskStatus::Executed => {
+                    AgentTaskReserve::Pending(record)
                 }
-                file.write_all(&expires_at.to_le_bytes())?;
-                file.sync_all()?;
-                Ok(true)
+                AgentTaskStatus::Acked | AgentTaskStatus::Expired => AgentTaskReserve::Duplicate,
+            });
+        }
+
+        let record = AgentTaskRecord {
+            record_version: AGENT_TASK_RECORD_VERSION,
+            status: AgentTaskStatus::Reserved,
+            sender_ops_pub: sender_ops_pub.to_string(),
+            task_id: envelope.task_id.clone(),
+            route_id,
+            reserved_at: now,
+            expires_at,
+            executed_at: None,
+            acked_at: None,
+            envelope,
+        };
+
+        match self.write_record_new(&record) {
+            Ok(()) => Ok(AgentTaskReserve::New(record)),
+            Err(e) if e.contains("already exists") => {
+                let record = self.read_record(&path)?;
+                Ok(match record.status {
+                    AgentTaskStatus::Reserved | AgentTaskStatus::Executed => {
+                        AgentTaskReserve::Pending(record)
+                    }
+                    AgentTaskStatus::Acked | AgentTaskStatus::Expired => {
+                        AgentTaskReserve::Duplicate
+                    }
+                })
             }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
             Err(e) => Err(e),
         }
     }
 
+    fn pending_for_sender(&self, sender_ops_pub: &str) -> Result<Vec<AgentTaskRecord>, String> {
+        let mut records = Vec::new();
+        for path in self.record_paths()? {
+            let record = self.read_record(&path)?;
+            if record.sender_ops_pub != sender_ops_pub {
+                continue;
+            }
+            if matches!(
+                record.status,
+                AgentTaskStatus::Reserved | AgentTaskStatus::Executed
+            ) {
+                records.push(record);
+            }
+        }
+        records.sort_by(|a, b| {
+            a.reserved_at
+                .cmp(&b.reserved_at)
+                .then(a.task_id.cmp(&b.task_id))
+        });
+        Ok(records)
+    }
+
+    fn mark_status(
+        &self,
+        record: &AgentTaskRecord,
+        status: AgentTaskStatus,
+        now: u64,
+    ) -> Result<AgentTaskRecord, String> {
+        let mut updated = record.clone();
+        updated.status = status;
+        match updated.status {
+            AgentTaskStatus::Executed => updated.executed_at = Some(now),
+            AgentTaskStatus::Acked => updated.acked_at = Some(now),
+            AgentTaskStatus::Reserved | AgentTaskStatus::Expired => {}
+        }
+        self.write_record_replace(&updated)?;
+        Ok(updated)
+    }
+
     fn purge_expired(&self, now: u64) -> Result<(), String> {
-        let entries =
-            std::fs::read_dir(&self.dir).map_err(|e| format!("read seen-task dir: {e}"))?;
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("read seen-task entry: {e}"))?;
-            let path = entry.path();
-            if path.file_name().and_then(|n| n.to_str()) == Some(AGENT_SEEN_SALT_FILE) {
-                continue;
-            }
-            if path.extension().and_then(|e| e.to_str()) != Some("seen") {
-                continue;
-            }
-            let remove = match std::fs::read(&path) {
-                Ok(bytes) if bytes.len() == 8 => {
-                    let mut arr = [0u8; 8];
-                    arr.copy_from_slice(&bytes);
-                    now > u64::from_le_bytes(arr)
+        for path in self.record_paths()? {
+            let remove = match self.read_record(&path) {
+                Ok(record) => {
+                    now > record.expires_at
+                        && matches!(
+                            record.status,
+                            AgentTaskStatus::Acked | AgentTaskStatus::Expired
+                        )
                 }
-                Ok(_) | Err(_) => true,
+                Err(_) => true,
             };
             if remove {
                 std::fs::remove_file(&path)
-                    .map_err(|e| format!("remove expired seen-task file: {e}"))?;
+                    .map_err(|e| format!("remove expired task-journal file: {e}"))?;
             }
         }
         Ok(())
     }
 
-    fn task_path(&self, sender_ops_pub: &str, task_id: &str) -> PathBuf {
+    fn record_key(&self, sender_ops_pub: &str, task_id: &str) -> String {
         let mut material = Vec::new();
-        material.extend_from_slice(AGENT_SEEN_TASK_DOMAIN);
+        material.extend_from_slice(AGENT_TASK_JOURNAL_DOMAIN);
         material.extend_from_slice(&self.salt);
         push_str(&mut material, sender_ops_pub);
         push_str(&mut material, task_id);
-        let digest = blake3::hash(&material).to_hex().to_string();
-        self.dir.join(format!("{digest}.seen"))
+        blake3::hash(&material).to_hex().to_string()
+    }
+
+    fn task_path(&self, sender_ops_pub: &str, task_id: &str) -> PathBuf {
+        self.dir.join(format!(
+            "{}.task.json",
+            self.record_key(sender_ops_pub, task_id)
+        ))
+    }
+
+    fn record_paths(&self) -> Result<Vec<PathBuf>, String> {
+        let entries =
+            std::fs::read_dir(&self.dir).map_err(|e| format!("read task-journal dir: {e}"))?;
+        let mut paths = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("read task-journal entry: {e}"))?;
+            let path = entry.path();
+            let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if file_name.ends_with(".task.json") {
+                paths.push(path);
+            }
+        }
+        Ok(paths)
+    }
+
+    fn read_record(&self, path: &Path) -> Result<AgentTaskRecord, String> {
+        let contents =
+            std::fs::read_to_string(path).map_err(|e| format!("read task-journal record: {e}"))?;
+        let record: AgentTaskRecord = serde_json::from_str(&contents)
+            .map_err(|e| format!("parse task-journal record: {e}"))?;
+        if record.record_version != AGENT_TASK_RECORD_VERSION {
+            return Err(format!(
+                "unsupported task-journal record_version {}",
+                record.record_version
+            ));
+        }
+        Ok(record)
+    }
+
+    fn write_record_new(&self, record: &AgentTaskRecord) -> Result<(), String> {
+        let path = self.task_path(&record.sender_ops_pub, &record.task_id);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| format!("create task-journal record: {e}"))?;
+        restrict_file_private(&file).map_err(|e| format!("restrict task-journal record: {e}"))?;
+        let bytes = serde_json::to_vec_pretty(record)
+            .map_err(|e| format!("encode task-journal record: {e}"))?;
+        file.write_all(&bytes)
+            .map_err(|e| format!("write task-journal record: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("sync task-journal record: {e}"))?;
+        Ok(())
+    }
+
+    fn write_record_replace(&self, record: &AgentTaskRecord) -> Result<(), String> {
+        let path = self.task_path(&record.sender_ops_pub, &record.task_id);
+        let tmp_path = self.dir.join(format!(
+            "{}.tmp-{}",
+            self.record_key(&record.sender_ops_pub, &record.task_id),
+            std::process::id()
+        ));
+        if tmp_path.exists() {
+            std::fs::remove_file(&tmp_path)
+                .map_err(|e| format!("remove stale task-journal temp file: {e}"))?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
+            .map_err(|e| format!("create task-journal temp file: {e}"))?;
+        restrict_file_private(&file)
+            .map_err(|e| format!("restrict task-journal temp file: {e}"))?;
+        let bytes = serde_json::to_vec_pretty(record)
+            .map_err(|e| format!("encode task-journal record: {e}"))?;
+        file.write_all(&bytes)
+            .map_err(|e| format!("write task-journal temp file: {e}"))?;
+        file.sync_all()
+            .map_err(|e| format!("sync task-journal temp file: {e}"))?;
+        drop(file);
+        std::fs::rename(&tmp_path, &path)
+            .map_err(|e| format!("replace task-journal record: {e}"))?;
+        Ok(())
     }
 }
 
-fn default_agent_seen_dir(identity_path: &str) -> PathBuf {
-    PathBuf::from(format!("{identity_path}.agent-seen"))
+fn default_agent_journal_dir(identity_path: &str) -> PathBuf {
+    PathBuf::from(format!("{identity_path}.agent-journal"))
 }
 
-fn load_or_create_seen_salt(dir: &Path) -> Result<[u8; 32], String> {
-    let path = dir.join(AGENT_SEEN_SALT_FILE);
-    match read_seen_salt(&path) {
+fn load_or_create_journal_salt(dir: &Path) -> Result<[u8; 32], String> {
+    let path = dir.join(AGENT_TASK_JOURNAL_SALT_FILE);
+    match read_journal_salt(&path) {
         Ok(salt) => Ok(salt),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => create_seen_salt(&path),
-        Err(e) => Err(format!("read seen-task salt: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => create_journal_salt(&path),
+        Err(e) => Err(format!("read task-journal salt: {e}")),
     }
 }
 
-fn read_seen_salt(path: &Path) -> std::io::Result<[u8; 32]> {
+fn read_journal_salt(path: &Path) -> std::io::Result<[u8; 32]> {
     let mut file = std::fs::File::open(path)?;
     if file.metadata()?.len() != 32 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "invalid seen-task salt length",
+            "invalid task-journal salt length",
         ));
     }
     let mut salt = [0u8; 32];
@@ -1017,7 +1412,7 @@ fn read_seen_salt(path: &Path) -> std::io::Result<[u8; 32]> {
     Ok(salt)
 }
 
-fn create_seen_salt(path: &Path) -> Result<[u8; 32], String> {
+fn create_journal_salt(path: &Path) -> Result<[u8; 32], String> {
     let mut salt = [0u8; 32];
     OsRng.fill_bytes(&mut salt);
     match std::fs::OpenOptions::new()
@@ -1026,23 +1421,38 @@ fn create_seen_salt(path: &Path) -> Result<[u8; 32], String> {
         .open(path)
     {
         Ok(mut file) => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                    .map_err(|e| format!("restrict seen-task salt permissions: {e}"))?;
-            }
+            restrict_file_private(&file)
+                .map_err(|e| format!("restrict task-journal salt permissions: {e}"))?;
             file.write_all(&salt)
-                .map_err(|e| format!("write seen-task salt: {e}"))?;
+                .map_err(|e| format!("write task-journal salt: {e}"))?;
             file.sync_all()
-                .map_err(|e| format!("sync seen-task salt: {e}"))?;
+                .map_err(|e| format!("sync task-journal salt: {e}"))?;
             Ok(salt)
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            read_seen_salt(path).map_err(|e| format!("read seen-task salt: {e}"))
+            read_journal_salt(path).map_err(|e| format!("read task-journal salt: {e}"))
         }
-        Err(e) => Err(format!("create seen-task salt: {e}")),
+        Err(e) => Err(format!("create task-journal salt: {e}")),
     }
+}
+
+fn restrict_dir_private(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("restrict directory permissions: {e}"))?;
+    }
+    Ok(())
+}
+
+fn restrict_file_private(file: &std::fs::File) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 fn parse_hex32(hex: &str, field: &str) -> Result<[u8; 32], String> {
