@@ -31,7 +31,12 @@ impl RotationEvent {
         let msg = rotation_message(&old_ops_pub, &new_ops_pub, nonce);
         let root_sig = root_keypair.sign(&msg).to_vec();
 
-        Ok(Self { old_ops_pub, new_ops_pub, root_sig, nonce })
+        Ok(Self {
+            old_ops_pub,
+            new_ops_pub,
+            root_sig,
+            nonce,
+        })
     }
 
     /// Verify this rotation event against the identity's root public key.

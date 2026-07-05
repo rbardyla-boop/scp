@@ -19,16 +19,18 @@ use scp_wire_format::signing::{handshake_sig_message, registration_message, rota
 
 fn register(ledger: &SubstrateLedger) -> (KeyPair, KeyPair) {
     let root_kp = KeyPair::generate();
-    let ops_kp  = KeyPair::generate();
+    let ops_kp = KeyPair::generate();
     let record = LedgerIdentityRecord {
-        k_root_pub:            root_kp.public,
-        k_ops_pub:             ops_kp.public,
-        recovery_policy_hash:  [0u8; 32],
+        k_root_pub: root_kp.public,
+        k_ops_pub: ops_kp.public,
+        recovery_policy_hash: [0u8; 32],
         continuity_commitment: [0u8; 32],
     };
     let msg = registration_message(&root_kp.public, &ops_kp.public, &[0u8; 32]);
     let sig = root_kp.sign(&msg);
-    ledger.register_identity(&record, &sig).expect("register_identity must succeed");
+    ledger
+        .register_identity(&record, &sig)
+        .expect("register_identity must succeed");
     (root_kp, ops_kp)
 }
 
@@ -36,15 +38,25 @@ fn publish_ephemeral(ledger: &SubstrateLedger, ops_kp: &KeyPair, expires_at: u64
     let (_, eph_pub) = x25519_generate_keypair();
     let msg = handshake_sig_message(&eph_pub, expires_at);
     let sig = ops_kp.sign(&msg);
-    ledger.publish_handshake_ephemeral(
-        &ops_kp.public,
-        HandshakeEphemeral { pub_key: eph_pub, sig: sig.to_vec(), published_at: 0, expires_at },
-    ).expect("publish_handshake_ephemeral must succeed");
+    ledger
+        .publish_handshake_ephemeral(
+            &ops_kp.public,
+            HandshakeEphemeral {
+                pub_key: eph_pub,
+                sig: sig.to_vec(),
+                published_at: 0,
+                expires_at,
+            },
+        )
+        .expect("publish_handshake_ephemeral must succeed");
     eph_pub
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 // ── §1. Revocation Monotonicity ───────────────────────────────────────────────
@@ -59,7 +71,9 @@ async fn revocation_is_monotonic_across_multiple_retrievals() {
 
     // root signs over bare ops_pub to authorize revocation.
     let revoke_sig = root_kp.sign(&ops_kp.public);
-    ledger.revoke(&ops_kp.public, &revoke_sig).expect("revoke must succeed");
+    ledger
+        .revoke(&ops_kp.public, &revoke_sig)
+        .expect("revoke must succeed");
 
     for _ in 0..10 {
         let result = FlashSession::retrieve_state(&ledger, &ops_kp.public).await;
@@ -79,7 +93,8 @@ async fn rotation_revokes_old_ops_pub_immediately() {
     let nonce = 1u64;
     let rot_msg = rotation_message(&ops_kp_a.public, &ops_kp_b.public, nonce);
     let rot_sig = root_kp.sign(&rot_msg);
-    ledger.rotate_key(&ops_kp_a.public, &ops_kp_b.public, nonce, &rot_sig)
+    ledger
+        .rotate_key(&ops_kp_a.public, &ops_kp_b.public, nonce, &rot_sig)
         .expect("rotate_key must succeed");
 
     // Old key revoked atomically by rotate_key.
@@ -90,10 +105,13 @@ async fn rotation_revokes_old_ops_pub_immediately() {
     );
 
     // New key is valid (no ephemeral yet — v1 fallback path).
-    let new_state = FlashSession::retrieve_state(&ledger, &ops_kp_b.public).await
+    let new_state = FlashSession::retrieve_state(&ledger, &ops_kp_b.public)
+        .await
         .expect("new ops_pub must be accessible after rotation");
-    assert!(new_state.handshake_ephemeral.is_none(),
-        "new ops_pub has no ephemerals until published — sender falls back to v1 path");
+    assert!(
+        new_state.handshake_ephemeral.is_none(),
+        "new ops_pub has no ephemerals until published — sender falls back to v1 path"
+    );
 }
 
 // ── §2. Ephemeral Coherence Under Rotation ────────────────────────────────────
@@ -110,14 +128,21 @@ async fn rotation_makes_old_ephemerals_inaccessible() {
     publish_ephemeral(&ledger, &ops_kp_a, now_secs() + 3600);
 
     // Confirm the ephemeral is visible before rotation.
-    let pre_state = FlashSession::retrieve_state(&ledger, &ops_kp_a.public).await.unwrap();
-    assert!(pre_state.handshake_ephemeral.is_some(), "ephemeral must be visible before rotation");
+    let pre_state = FlashSession::retrieve_state(&ledger, &ops_kp_a.public)
+        .await
+        .unwrap();
+    assert!(
+        pre_state.handshake_ephemeral.is_some(),
+        "ephemeral must be visible before rotation"
+    );
 
     let ops_kp_b = KeyPair::generate();
     let nonce = 42u64;
     let rot_msg = rotation_message(&ops_kp_a.public, &ops_kp_b.public, nonce);
     let rot_sig = root_kp.sign(&rot_msg);
-    ledger.rotate_key(&ops_kp_a.public, &ops_kp_b.public, nonce, &rot_sig).unwrap();
+    ledger
+        .rotate_key(&ops_kp_a.public, &ops_kp_b.public, nonce, &rot_sig)
+        .unwrap();
 
     // Old key revoked — its ephemerals are gated behind RecipientRevoked.
     let post_result = FlashSession::retrieve_state(&ledger, &ops_kp_a.public).await;
@@ -136,12 +161,18 @@ async fn new_ops_pub_has_no_ephemerals_after_rotation() {
     let nonce = 1u64;
     let rot_msg = rotation_message(&ops_kp_a.public, &ops_kp_b.public, nonce);
     let rot_sig = root_kp.sign(&rot_msg);
-    ledger.rotate_key(&ops_kp_a.public, &ops_kp_b.public, nonce, &rot_sig).unwrap();
+    ledger
+        .rotate_key(&ops_kp_a.public, &ops_kp_b.public, nonce, &rot_sig)
+        .unwrap();
 
-    let state = FlashSession::retrieve_state(&ledger, &ops_kp_b.public).await.unwrap();
-    assert!(state.handshake_ephemeral.is_none(),
+    let state = FlashSession::retrieve_state(&ledger, &ops_kp_b.public)
+        .await
+        .unwrap();
+    assert!(
+        state.handshake_ephemeral.is_none(),
         "new ops_pub starts with no ephemerals after rotation — \
-         sender falls back to v1 path until recipient republishes a handshake ephemeral");
+         sender falls back to v1 path until recipient republishes a handshake ephemeral"
+    );
 }
 
 #[tokio::test]
@@ -162,11 +193,17 @@ async fn ephemeral_capacity_eviction_drops_oldest() {
     publish_ephemeral(&ledger, &ops_kp, newest_expires);
 
     // retrieve_state returns max-by-expires_at — the freshest ephemeral.
-    let state = FlashSession::retrieve_state(&ledger, &ops_kp.public).await.unwrap();
-    let eph = state.handshake_ephemeral.expect("must have ephemeral after 9 publishes");
-    assert_eq!(eph.expires_at, newest_expires,
+    let state = FlashSession::retrieve_state(&ledger, &ops_kp.public)
+        .await
+        .unwrap();
+    let eph = state
+        .handshake_ephemeral
+        .expect("must have ephemeral after 9 publishes");
+    assert_eq!(
+        eph.expires_at, newest_expires,
         "capacity eviction must drop the oldest entry; \
-         retrieve returns the most-recently-expiring valid ephemeral");
+         retrieve returns the most-recently-expiring valid ephemeral"
+    );
 }
 
 // ── §3. Concurrency Safety ────────────────────────────────────────────────────
@@ -183,14 +220,16 @@ async fn concurrent_retrieve_state_on_valid_key_is_race_free() {
     let handles: Vec<_> = (0..50)
         .map(|_| {
             let ledger = ledger.clone();
-            tokio::spawn(async move {
-                FlashSession::retrieve_state(ledger.as_ref(), &ops_pub).await
-            })
+            tokio::spawn(
+                async move { FlashSession::retrieve_state(ledger.as_ref(), &ops_pub).await },
+            )
         })
         .collect();
 
     for h in handles {
-        h.await.unwrap().expect("concurrent retrieve_state must succeed with no race condition");
+        h.await
+            .unwrap()
+            .expect("concurrent retrieve_state must succeed with no race condition");
     }
 }
 
@@ -203,16 +242,14 @@ async fn concurrent_revoke_and_retrieve_has_monotonic_outcome() {
     // Race: revoke task vs. 10 retrieve tasks.
     let revoke_ledger = ledger.clone();
     let revoke_sig = root_kp.sign(&ops_pub);
-    let revoke_task = tokio::spawn(async move {
-        revoke_ledger.revoke(&ops_pub, &revoke_sig)
-    });
+    let revoke_task = tokio::spawn(async move { revoke_ledger.revoke(&ops_pub, &revoke_sig) });
 
     let retrieve_handles: Vec<_> = (0..10)
         .map(|_| {
             let ledger = ledger.clone();
-            tokio::spawn(async move {
-                FlashSession::retrieve_state(ledger.as_ref(), &ops_pub).await
-            })
+            tokio::spawn(
+                async move { FlashSession::retrieve_state(ledger.as_ref(), &ops_pub).await },
+            )
         })
         .collect();
 
@@ -221,7 +258,7 @@ async fn concurrent_revoke_and_retrieve_has_monotonic_outcome() {
     for h in retrieve_handles {
         let result = h.await.unwrap();
         match result {
-            Ok(_)                                 => {} // retrieved before revocation
+            Ok(_) => {}                                 // retrieved before revocation
             Err(TransportError::RecipientRevoked) => {} // retrieved after revocation
             Err(e) => panic!("concurrent revoke+retrieve produced unexpected error: {e}"),
         }
@@ -242,16 +279,19 @@ async fn toctou_revocation_after_snapshot_does_not_cancel_session() {
     let ledger = SubstrateLedger::new();
     let (root_kp, ops_kp) = register(&ledger);
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     // Snapshot taken while key is valid.
-    let state = FlashSession::retrieve_state(&ledger, &ops_kp.public).await
+    let state = FlashSession::retrieve_state(&ledger, &ops_kp.public)
+        .await
         .expect("retrieve_state must succeed before revocation");
 
     // Revoke AFTER the snapshot.
     let revoke_sig = root_kp.sign(&ops_kp.public);
-    ledger.revoke(&ops_kp.public, &revoke_sig).expect("revoke must succeed");
+    ledger
+        .revoke(&ops_kp.public, &revoke_sig)
+        .expect("revoke must succeed");
 
     // Session proceeds from the pre-revocation snapshot — correct protocol behavior.
     let session = FlashSession::open_and_send(state, b"toctou-test", &cache, &engine)
@@ -276,65 +316,99 @@ async fn toctou_revocation_after_snapshot_does_not_cancel_session() {
 #[test]
 fn state_commitment_is_deterministic() {
     let make = || RecipientState {
-        ops_pub:             [0x44u8; 32],
-        vitality:            VitalityState::Active,
-        routing_hints:       vec![],
+        ops_pub: [0x44u8; 32],
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
         handshake_ephemeral: Some(PublishedHandshakeKey {
-            pub_key:    [0xbbu8; 32],
-            sig:        [0u8; 64],
+            pub_key: [0xbbu8; 32],
+            sig: [0u8; 64],
             expires_at: 7200,
         }),
     };
     let c = make().commitment();
-    assert_eq!(c, make().commitment(), "commitment must be deterministic for identical state");
+    assert_eq!(
+        c,
+        make().commitment(),
+        "commitment must be deterministic for identical state"
+    );
     assert_ne!(c, [0u8; 32], "commitment must be non-zero");
 }
 
 #[test]
 fn state_commitment_binds_all_fields() {
     let base = RecipientState {
-        ops_pub:             [0x11u8; 32],
-        vitality:            VitalityState::Active,
-        routing_hints:       vec![],
+        ops_pub: [0x11u8; 32],
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
         handshake_ephemeral: None,
     };
     let base_c = base.commitment();
 
     let changed_ops = RecipientState {
-        ops_pub: [0x22u8; 32], vitality: VitalityState::Active,
-        routing_hints: vec![], handshake_ephemeral: None,
+        ops_pub: [0x22u8; 32],
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
+        handshake_ephemeral: None,
     };
-    assert_ne!(base_c, changed_ops.commitment(), "ops_pub change must change commitment");
+    assert_ne!(
+        base_c,
+        changed_ops.commitment(),
+        "ops_pub change must change commitment"
+    );
 
     let changed_vitality = RecipientState {
-        ops_pub: [0x11u8; 32], vitality: VitalityState::Warm,
-        routing_hints: vec![], handshake_ephemeral: None,
+        ops_pub: [0x11u8; 32],
+        vitality: VitalityState::Warm,
+        routing_hints: vec![],
+        handshake_ephemeral: None,
     };
-    assert_ne!(base_c, changed_vitality.commitment(), "vitality change must change commitment");
+    assert_ne!(
+        base_c,
+        changed_vitality.commitment(),
+        "vitality change must change commitment"
+    );
 
     let with_ephemeral = RecipientState {
-        ops_pub: [0x11u8; 32], vitality: VitalityState::Active, routing_hints: vec![],
+        ops_pub: [0x11u8; 32],
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
         handshake_ephemeral: Some(PublishedHandshakeKey {
-            pub_key: [0xaau8; 32], sig: [0u8; 64], expires_at: 1000,
+            pub_key: [0xaau8; 32],
+            sig: [0u8; 64],
+            expires_at: 1000,
         }),
     };
-    assert_ne!(base_c, with_ephemeral.commitment(),
-        "ephemeral presence change must change commitment");
+    assert_ne!(
+        base_c,
+        with_ephemeral.commitment(),
+        "ephemeral presence change must change commitment"
+    );
 
     let eph_expires_a = RecipientState {
-        ops_pub: [0x11u8; 32], vitality: VitalityState::Active, routing_hints: vec![],
+        ops_pub: [0x11u8; 32],
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
         handshake_ephemeral: Some(PublishedHandshakeKey {
-            pub_key: [0xaau8; 32], sig: [0u8; 64], expires_at: 1000,
+            pub_key: [0xaau8; 32],
+            sig: [0u8; 64],
+            expires_at: 1000,
         }),
     };
     let eph_expires_b = RecipientState {
-        ops_pub: [0x11u8; 32], vitality: VitalityState::Active, routing_hints: vec![],
+        ops_pub: [0x11u8; 32],
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
         handshake_ephemeral: Some(PublishedHandshakeKey {
-            pub_key: [0xaau8; 32], sig: [0u8; 64], expires_at: 2000,
+            pub_key: [0xaau8; 32],
+            sig: [0u8; 64],
+            expires_at: 2000,
         }),
     };
-    assert_ne!(eph_expires_a.commitment(), eph_expires_b.commitment(),
-        "expires_at change must change commitment");
+    assert_ne!(
+        eph_expires_a.commitment(),
+        eph_expires_b.commitment(),
+        "expires_at change must change commitment"
+    );
 }
 
 #[test]
@@ -353,23 +427,23 @@ fn state_commitment_matches_known_vector() {
     // Any change to field ordering, byte encoding, or vitality byte mapping
     // MUST break this test and MUST be handled as a versioned protocol change.
     let state = RecipientState {
-        ops_pub:             [0x55u8; 32],
-        vitality:            VitalityState::Active,
-        routing_hints:       vec![],
+        ops_pub: [0x55u8; 32],
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
         handshake_ephemeral: Some(PublishedHandshakeKey {
-            pub_key:    [0xaau8; 32],
-            sig:        [0u8; 64],
+            pub_key: [0xaau8; 32],
+            sig: [0u8; 64],
             expires_at: 9_999_999u64,
         }),
     };
     let got = state.commitment();
     const EXPECTED: [u8; 32] = [
-        225, 31, 255, 116, 151, 154,   5,  69,
-         72, 103, 170,  48,  99, 203,  86,  69,
-         90, 192, 116, 200, 251, 180,  18, 226,
-        161,  35, 137, 157, 232, 242, 210,  30,
+        225, 31, 255, 116, 151, 154, 5, 69, 72, 103, 170, 48, 99, 203, 86, 69, 90, 192, 116, 200,
+        251, 180, 18, 226, 161, 35, 137, 157, 232, 242, 210, 30,
     ];
-    assert_eq!(got, EXPECTED,
+    assert_eq!(
+        got, EXPECTED,
         "state commitment does not match golden vector — \
-         field ordering or byte encoding has changed; this is a breaking protocol change");
+         field ordering or byte encoding has changed; this is a breaking protocol change"
+    );
 }

@@ -36,7 +36,9 @@ impl KeyPair {
 
     /// Sign `message` with the secret key. Returns a 64-byte Ed25519 signature.
     pub fn sign(&self, message: &[u8]) -> [u8; 64] {
-        SigningKey::from_bytes(&self.secret).sign(message).to_bytes()
+        SigningKey::from_bytes(&self.secret)
+            .sign(message)
+            .to_bytes()
     }
 }
 
@@ -57,8 +59,7 @@ impl PublicKey {
 /// derive keys from this output via `scp_derive_key` before any cryptographic
 /// use. Do not use this output directly as a symmetric key.
 pub fn x25519_dh(local_secret: &[u8; 32], remote_public: &[u8; 32]) -> [u8; 32] {
-    let shared = StaticSecret::from(*local_secret)
-        .diffie_hellman(&(*remote_public).into());
+    let shared = StaticSecret::from(*local_secret).diffie_hellman(&(*remote_public).into());
     *shared.as_bytes()
 }
 
@@ -71,7 +72,9 @@ pub fn x25519_generate_keypair() -> ([u8; 32], [u8; 32]) {
 }
 
 /// RNG-injectable variant of `x25519_generate_keypair` for deterministic testing.
-pub fn x25519_generate_keypair_with_rng<R: rand_core::CryptoRng + RngCore>(rng: &mut R) -> ([u8; 32], [u8; 32]) {
+pub fn x25519_generate_keypair_with_rng<R: rand_core::CryptoRng + RngCore>(
+    rng: &mut R,
+) -> ([u8; 32], [u8; 32]) {
     let secret = StaticSecret::random_from_rng(rng);
     let public = x25519_dalek::PublicKey::from(&secret);
     (secret.to_bytes(), *public.as_bytes())
@@ -81,8 +84,7 @@ impl SessionKey {
     /// Derive an ephemeral session key from a local X25519 secret and remote X25519 public key.
     /// The raw DH shared secret is hashed with BLAKE3 to produce the symmetric key.
     pub fn derive_x25519(local_secret: &[u8; 32], remote_public: &[u8; 32]) -> Self {
-        let shared = StaticSecret::from(*local_secret)
-            .diffie_hellman(&(*remote_public).into());
+        let shared = StaticSecret::from(*local_secret).diffie_hellman(&(*remote_public).into());
         SessionKey(*blake3::hash(shared.as_bytes()).as_bytes())
     }
 

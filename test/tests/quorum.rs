@@ -20,30 +20,34 @@ use scp_wire_format::signing::{handshake_sig_message, registration_message};
 
 fn register(ledger: &SubstrateLedger) -> (KeyPair, KeyPair) {
     let root_kp = KeyPair::generate();
-    let ops_kp  = KeyPair::generate();
+    let ops_kp = KeyPair::generate();
     let record = LedgerIdentityRecord {
-        k_root_pub:            root_kp.public,
-        k_ops_pub:             ops_kp.public,
-        recovery_policy_hash:  [0u8; 32],
+        k_root_pub: root_kp.public,
+        k_ops_pub: ops_kp.public,
+        recovery_policy_hash: [0u8; 32],
         continuity_commitment: [0u8; 32],
     };
     let msg = registration_message(&root_kp.public, &ops_kp.public, &[0u8; 32]);
     let sig = root_kp.sign(&msg);
-    ledger.register_identity(&record, &sig).expect("register_identity must succeed");
+    ledger
+        .register_identity(&record, &sig)
+        .expect("register_identity must succeed");
     (root_kp, ops_kp)
 }
 
 /// Register the same identity (same root_kp/ops_kp pair) on a second independent ledger.
 fn register_same_identity(ledger: &SubstrateLedger, root_kp: &KeyPair, ops_kp: &KeyPair) {
     let record = LedgerIdentityRecord {
-        k_root_pub:            root_kp.public,
-        k_ops_pub:             ops_kp.public,
-        recovery_policy_hash:  [0u8; 32],
+        k_root_pub: root_kp.public,
+        k_ops_pub: ops_kp.public,
+        recovery_policy_hash: [0u8; 32],
         continuity_commitment: [0u8; 32],
     };
     let msg = registration_message(&root_kp.public, &ops_kp.public, &[0u8; 32]);
     let sig = root_kp.sign(&msg);
-    ledger.register_identity(&record, &sig).expect("register_identity must succeed");
+    ledger
+        .register_identity(&record, &sig)
+        .expect("register_identity must succeed");
 }
 
 /// Publish an ephemeral with a caller-provided eph_pub.
@@ -79,7 +83,10 @@ fn publish_ephemeral(ledger: &SubstrateLedger, ops_kp: &KeyPair, expires_at: u64
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 fn provider_id(byte: u8) -> [u8; 32] {
@@ -99,7 +106,10 @@ fn quorum_empty_providers_returns_unavailable() {
         "is_revoked_quorum on empty quorum must return Unavailable"
     );
     assert!(
-        matches!(q.get_handshake_ephemeral_quorum(&ops_pub, now), QuorumResult::Unavailable),
+        matches!(
+            q.get_handshake_ephemeral_quorum(&ops_pub, now),
+            QuorumResult::Unavailable
+        ),
         "get_handshake_ephemeral_quorum on empty quorum must return Unavailable"
     );
     assert!(
@@ -120,7 +130,9 @@ fn quorum_single_provider_not_revoked() {
 
     match q.is_revoked_quorum(&ops_kp.public) {
         QuorumResult::Agree(false) => {}
-        QuorumResult::Agree(true) => panic!("registered but unrevoked key must not be seen as revoked"),
+        QuorumResult::Agree(true) => {
+            panic!("registered but unrevoked key must not be seen as revoked")
+        }
         _ => panic!("expected Agree(false) for unrevoked key"),
     }
 }
@@ -133,7 +145,9 @@ fn quorum_single_provider_revoked() {
     let (root_kp, ops_kp) = register(&ledger);
 
     let revoke_sig = root_kp.sign(&ops_kp.public);
-    ledger.revoke(&ops_kp.public, &revoke_sig).expect("revoke must succeed");
+    ledger
+        .revoke(&ops_kp.public, &revoke_sig)
+        .expect("revoke must succeed");
 
     let mut q = ProviderQuorum::new();
     q.add(provider_id(0x01), ledger);
@@ -159,7 +173,9 @@ fn quorum_monotonic_any_revocation_wins() {
     register_same_identity(&ledger_c, &root_kp, &ops_kp);
 
     let revoke_sig = root_kp.sign(&ops_kp.public);
-    ledger_b.revoke(&ops_kp.public, &revoke_sig).expect("revoke must succeed");
+    ledger_b
+        .revoke(&ops_kp.public, &revoke_sig)
+        .expect("revoke must succeed");
 
     let mut q = ProviderQuorum::new();
     q.add(provider_id(0x0a), ledger_a); // not yet revoked (lagging)
@@ -202,7 +218,9 @@ fn quorum_soft_state_latest_ephemeral_wins() {
                 "the ephemeral with the latest expires_at must be returned"
             );
         }
-        QuorumResult::Agree(None) => panic!("must return Some — both providers have valid ephemerals"),
+        QuorumResult::Agree(None) => {
+            panic!("must return Some — both providers have valid ephemerals")
+        }
         _ => panic!("expected Agree(Some(_))"),
     }
 }

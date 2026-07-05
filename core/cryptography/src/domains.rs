@@ -27,12 +27,12 @@ impl DomainLabel {
     /// breaking protocol change.
     pub fn as_context(&self) -> &'static str {
         match self {
-            DomainLabel::Transport  => "scp:transport:v1:",
-            DomainLabel::Recovery   => "scp:recovery:v1:",
-            DomainLabel::Relay      => "scp:relay:v1:",
-            DomainLabel::Vitality   => "scp:vitality:v1:",
+            DomainLabel::Transport => "scp:transport:v1:",
+            DomainLabel::Recovery => "scp:recovery:v1:",
+            DomainLabel::Relay => "scp:relay:v1:",
+            DomainLabel::Vitality => "scp:vitality:v1:",
             DomainLabel::Transcript => "scp:transcript:v1:",
-            DomainLabel::Tunnel     => "scp:tunnel:v1:",
+            DomainLabel::Tunnel => "scp:tunnel:v1:",
         }
     }
 }
@@ -50,7 +50,7 @@ pub fn scp_derive_key(domain: DomainLabel, key_material: &[u8]) -> [u8; 32] {
 // New code must use DomainLabel + scp_derive_key instead.
 
 pub const SCP_DOMAIN_TRANSPORT: &[u8] = b"scp:transport:v1:";
-pub const SCP_DOMAIN_RELAY:     &[u8] = b"scp:relay:v1:";
-pub const SCP_DOMAIN_RECOVERY:  &[u8] = b"scp:recovery:v1:";
-pub const SCP_DOMAIN_VITALITY:  &[u8] = b"scp:vitality:v1:";
-pub const SCP_DOMAIN_TUNNEL:    &[u8] = b"scp:tunnel:v1:";
+pub const SCP_DOMAIN_RELAY: &[u8] = b"scp:relay:v1:";
+pub const SCP_DOMAIN_RECOVERY: &[u8] = b"scp:recovery:v1:";
+pub const SCP_DOMAIN_VITALITY: &[u8] = b"scp:vitality:v1:";
+pub const SCP_DOMAIN_TUNNEL: &[u8] = b"scp:tunnel:v1:";

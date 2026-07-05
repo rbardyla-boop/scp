@@ -71,7 +71,10 @@ pub struct RelayEndpoint {
 
 impl RelayEndpoint {
     pub fn new(endpoint_id: [u8; 32], addr: impl Into<String>) -> Self {
-        Self { endpoint_id, addr: addr.into() }
+        Self {
+            endpoint_id,
+            addr: addr.into(),
+        }
     }
 
     pub fn addr(&self) -> &str {
@@ -103,10 +106,7 @@ impl DeliveryEndpoint for RelayEndpoint {
         with_io_timeout(self.attempt_store_inner(mailbox, burst_cbor)).await
     }
 
-    async fn attempt_poll(
-        &self,
-        mailbox: &DevMailboxId,
-    ) -> Result<Vec<Vec<u8>>, DeliveryError> {
+    async fn attempt_poll(&self, mailbox: &DevMailboxId) -> Result<Vec<Vec<u8>>, DeliveryError> {
         with_io_timeout(self.attempt_poll_inner(mailbox)).await
     }
 }
@@ -126,13 +126,18 @@ impl RelayEndpoint {
         stream.write_all(&[0x01]).await.map_err(map_io_error)?;
         stream.write_all(&mailbox.0).await.map_err(map_io_error)?;
         let len = burst_cbor.len() as u32;
-        stream.write_all(&len.to_le_bytes()).await.map_err(map_io_error)?;
+        stream
+            .write_all(&len.to_le_bytes())
+            .await
+            .map_err(map_io_error)?;
         stream.write_all(burst_cbor).await.map_err(map_io_error)?;
 
         let mut ack = [0u8; 1];
         stream.read_exact(&mut ack).await.map_err(map_io_error)?;
         if ack[0] != 0x00 {
-            return Err(DeliveryError::Protocol("relay returned unexpected ack byte".into()));
+            return Err(DeliveryError::Protocol(
+                "relay returned unexpected ack byte".into(),
+            ));
         }
         Ok(())
     }
@@ -154,7 +159,10 @@ impl RelayEndpoint {
         stream.write_all(&mailbox.0).await.map_err(map_io_error)?;
 
         let mut count_buf = [0u8; 4];
-        stream.read_exact(&mut count_buf).await.map_err(map_io_error)?;
+        stream
+            .read_exact(&mut count_buf)
+            .await
+            .map_err(map_io_error)?;
         let count = u32::from_le_bytes(count_buf) as usize;
         if count > MAX_BURSTS_PER_POLL {
             return Err(DeliveryError::Protocol(format!(
@@ -165,7 +173,10 @@ impl RelayEndpoint {
         let mut bursts = Vec::with_capacity(count);
         for _ in 0..count {
             let mut len_buf = [0u8; 4];
-            stream.read_exact(&mut len_buf).await.map_err(map_io_error)?;
+            stream
+                .read_exact(&mut len_buf)
+                .await
+                .map_err(map_io_error)?;
             let len = u32::from_le_bytes(len_buf) as usize;
             if len > MAX_BURST_BYTES {
                 return Err(DeliveryError::Protocol(format!(
@@ -240,7 +251,10 @@ pub struct DeliveryPool<D: DeliveryEndpoint + Clone> {
 }
 
 impl<D: DeliveryEndpoint + Clone> DeliveryPool<D> {
-    pub fn new(strategy: scp_provider_pool::SamplingStrategy, max_outstanding_receipts: usize) -> Self {
+    pub fn new(
+        strategy: scp_provider_pool::SamplingStrategy,
+        max_outstanding_receipts: usize,
+    ) -> Self {
         Self {
             inner: scp_provider_pool::ProviderPool::new(strategy)
                 .with_admissible_tracking(max_outstanding_receipts),
@@ -320,7 +334,9 @@ mod tests {
     use rand::SeedableRng;
     use std::sync::{Arc, Mutex};
 
-    fn seeded() -> StdRng { StdRng::seed_from_u64(0) }
+    fn seeded() -> StdRng {
+        StdRng::seed_from_u64(0)
+    }
 
     #[derive(Clone)]
     struct MockEndpoint {
@@ -331,12 +347,17 @@ mod tests {
 
     impl MockEndpoint {
         fn new(id: u8) -> Self {
-            Self { endpoint_id: [id; 32], calls: Arc::new(Mutex::new(0)) }
+            Self {
+                endpoint_id: [id; 32],
+                calls: Arc::new(Mutex::new(0)),
+            }
         }
     }
 
     impl DeliveryEndpoint for MockEndpoint {
-        fn endpoint_id(&self) -> [u8; 32] { self.endpoint_id }
+        fn endpoint_id(&self) -> [u8; 32] {
+            self.endpoint_id
+        }
 
         async fn attempt_store(
             &self,
@@ -370,9 +391,12 @@ mod tests {
         let tag = [42u8; 32];
         let a = RelayEndpoint::new(tag, "127.0.0.1:7700");
         let b = RelayEndpoint::new(tag, "127.0.0.1:9999");
-        assert_eq!(a.endpoint_id(), b.endpoint_id(),
+        assert_eq!(
+            a.endpoint_id(),
+            b.endpoint_id(),
             "endpoint_id must be unaffected by a change in addr — it is an \
-             independent operator-assigned tag, never derived from the address");
+             independent operator-assigned tag, never derived from the address"
+        );
         assert_ne!(a.addr(), b.addr());
     }
 
@@ -381,9 +405,12 @@ mod tests {
         let a = RelayEndpoint::new([1u8; 32], "127.0.0.1:7700");
         let b = RelayEndpoint::new([2u8; 32], "127.0.0.1:7700");
         assert_eq!(a.addr(), b.addr());
-        assert_ne!(a.endpoint_id(), b.endpoint_id(),
+        assert_ne!(
+            a.endpoint_id(),
+            b.endpoint_id(),
             "distinct operator-assigned tags remain distinct pool keys even at \
-             an identical address — the pool key is the tag, never the address");
+             an identical address — the pool key is the tag, never the address"
+        );
     }
 
     // ── io::Error -> DeliveryError mapping (pure, no network) ──────────────────
@@ -416,9 +443,11 @@ mod tests {
         let task = tokio::spawn(with_io_timeout(never));
         tokio::time::advance(RELAY_IO_TIMEOUT + std::time::Duration::from_millis(100)).await;
         let result = task.await.unwrap();
-        assert!(matches!(result, Err(DeliveryError::Timeout)),
+        assert!(
+            matches!(result, Err(DeliveryError::Timeout)),
             "a future that never resolves must be reported as a real timeout, \
-             not left to hang the caller indefinitely");
+             not left to hang the caller indefinitely"
+        );
     }
 
     // ── Security fix: a hostile relay cannot force unbounded allocation ──────
@@ -490,7 +519,11 @@ mod tests {
 
         let mut rng = seeded();
         let routes = pool.select_route(&mut rng).expect("selection must succeed");
-        assert_eq!(routes.len(), 1, "RandomK(1) over 2 endpoints must select 1 route");
+        assert_eq!(
+            routes.len(),
+            1,
+            "RandomK(1) over 2 endpoints must select 1 route"
+        );
     }
 
     #[test]
@@ -534,7 +567,11 @@ mod tests {
 
         let mut rng = seeded();
         let routes = pool.select_route(&mut rng).unwrap();
-        assert_eq!(routes.len(), 2, "RandomK(2) over 2 endpoints must select both");
+        assert_eq!(
+            routes.len(),
+            2,
+            "RandomK(2) over 2 endpoints must select both"
+        );
 
         // Kill `dying` via two failed receipts (max_consecutive_failures = 2).
         for route in routes {
@@ -551,9 +588,16 @@ mod tests {
 
         // After 2 consecutive failures, `dying` must no longer appear in selection.
         let routes3 = pool.select_route(&mut rng).unwrap();
-        assert_eq!(routes3.len(), 1, "dead endpoint must be filtered from selection");
-        assert_eq!(routes3[0].endpoint.endpoint_id(), healthy.endpoint_id(),
-            "only the healthy endpoint may remain selectable");
+        assert_eq!(
+            routes3.len(),
+            1,
+            "dead endpoint must be filtered from selection"
+        );
+        assert_eq!(
+            routes3[0].endpoint.endpoint_id(),
+            healthy.endpoint_id(),
+            "only the healthy endpoint may remain selectable"
+        );
     }
 
     // ── Security invariant: at-most-once outcome per receipt (anti-steering) ──
@@ -571,8 +615,10 @@ mod tests {
         let routes = pool.select_route(&mut rng).unwrap();
         let route = routes.into_iter().next().unwrap();
 
-        assert!(pool.record_delivery_failure(&route.receipt).is_ok(),
-            "first presentation of a valid receipt must succeed");
+        assert!(
+            pool.record_delivery_failure(&route.receipt).is_ok(),
+            "first presentation of a valid receipt must succeed"
+        );
         assert_eq!(
             pool.record_delivery_failure(&route.receipt),
             Err(scp_provider_pool::AdmissibilityError::UnknownReceipt),
@@ -581,7 +627,10 @@ mod tests {
              failure into repeated routing-relevant liveness degradation"
         );
         let snap = pool.telemetry();
-        assert_eq!(snap.admissible_failure_total, 1, "duplicate rejection must not double-count");
+        assert_eq!(
+            snap.admissible_failure_total, 1,
+            "duplicate rejection must not double-count"
+        );
     }
 
     // ── Security invariant: a tampered receipt is rejected (provider binding) ─
@@ -616,11 +665,17 @@ mod tests {
 
         let mut rng = seeded();
         let first = pool.select_route(&mut rng);
-        assert!(first.is_ok(), "first selection within capacity must succeed");
+        assert!(
+            first.is_ok(),
+            "first selection within capacity must succeed"
+        );
 
         let second = pool.select_route(&mut rng);
         assert!(
-            matches!(second, Err(scp_provider_pool::AdmissibilityError::ReceiptCapacityExhausted)),
+            matches!(
+                second,
+                Err(scp_provider_pool::AdmissibilityError::ReceiptCapacityExhausted)
+            ),
             "second selection must be refused: capacity bound is 1 and one receipt is outstanding"
         );
     }
@@ -686,7 +741,10 @@ mod tests {
         let routes = pool.select_route(&mut rng).unwrap();
         let mut ids: Vec<[u8; 32]> = routes.iter().map(|r| r.endpoint.endpoint_id()).collect();
         ids.sort();
-        assert_eq!(ids, vec![a.endpoint_id(), b.endpoint_id()],
-            "both distinct tags must be present as distinct pool entries");
+        assert_eq!(
+            ids,
+            vec![a.endpoint_id(), b.endpoint_id()],
+            "both distinct tags must be present as distinct pool entries"
+        );
     }
 }

@@ -57,15 +57,21 @@ pub struct ProviderQuorum<P> {
 
 impl<P: StateProvider> ProviderQuorum<P> {
     pub fn new() -> Self {
-        Self { providers: Vec::new() }
+        Self {
+            providers: Vec::new(),
+        }
     }
 
     pub fn from_providers(providers: Vec<([u8; 32], P)>) -> Self {
         Self { providers }
     }
 
-    pub fn len(&self) -> usize { self.providers.len() }
-    pub fn is_empty(&self) -> bool { self.providers.is_empty() }
+    pub fn len(&self) -> usize {
+        self.providers.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.providers.is_empty()
+    }
 
     pub fn add(&mut self, provider_id: [u8; 32], provider: P) {
         self.providers.push((provider_id, provider));
@@ -111,7 +117,8 @@ impl<P: StateProvider> ProviderQuorum<P> {
         if self.providers.is_empty() {
             return QuorumResult::Unavailable;
         }
-        let best = self.providers
+        let best = self
+            .providers
             .iter()
             .filter_map(|(_, p)| p.get_handshake_ephemeral(ops_pub, now))
             .max_by_key(|eph| eph.expires_at);
@@ -144,7 +151,8 @@ impl<P: StateProvider> ProviderQuorum<P> {
         let now = now_secs();
 
         // Collect (provider_id, commitment) for non-revoked providers.
-        let observations: Vec<([u8; 32], [u8; 32])> = self.providers
+        let observations: Vec<([u8; 32], [u8; 32])> = self
+            .providers
             .iter()
             .filter(|(_, p)| !p.is_revoked(ops_pub))
             .map(|(id, p)| {

@@ -9,7 +9,7 @@
 // statistical softness, not cryptographic invisibility.
 
 use scp_relay_perturbation::{
-    PerturbationEngine, MAX_JITTER_MS, MAX_DUMMY_BURSTS_PER_MINUTE, DUMMY_BURST_PROBABILITY,
+    PerturbationEngine, DUMMY_BURST_PROBABILITY, MAX_DUMMY_BURSTS_PER_MINUTE, MAX_JITTER_MS,
 };
 use scp_vitality::VitalityState;
 use std::time::Duration;
@@ -24,9 +24,11 @@ fn jitter_distribution_not_deterministic() {
     let samples: Vec<Duration> = (0..100).map(|_| engine.jitter_delay()).collect();
     let distinct: std::collections::HashSet<u64> =
         samples.iter().map(|d| d.as_millis() as u64).collect();
-    assert!(distinct.len() >= 3,
+    assert!(
+        distinct.len() >= 3,
         "100 jitter samples must produce at least 3 distinct values — \
-         a deterministic or constant jitter defeats its purpose");
+         a deterministic or constant jitter defeats its purpose"
+    );
 }
 
 #[test]
@@ -34,9 +36,11 @@ fn jitter_always_within_bound() {
     let engine = PerturbationEngine::new(Duration::from_millis(MAX_JITTER_MS));
     for i in 0..500 {
         let j = engine.jitter_delay();
-        assert!(j.as_millis() as u64 <= MAX_JITTER_MS,
+        assert!(
+            j.as_millis() as u64 <= MAX_JITTER_MS,
             "jitter sample {i} = {}ms exceeds MAX_JITTER_MS = {MAX_JITTER_MS}ms",
-            j.as_millis());
+            j.as_millis()
+        );
     }
 }
 
@@ -45,22 +49,29 @@ fn passthrough_jitter_is_always_zero() {
     let engine = PerturbationEngine::passthrough();
     for i in 0..50 {
         let j = engine.jitter_delay();
-        assert_eq!(j, Duration::ZERO,
+        assert_eq!(
+            j,
+            Duration::ZERO,
             "passthrough engine sample {i} must be exactly zero — \
-             passthrough mode must not introduce any timing delay");
+             passthrough mode must not introduce any timing delay"
+        );
     }
 }
 
 #[test]
 fn jitter_mean_within_reasonable_range() {
     let engine = PerturbationEngine::new(Duration::from_millis(MAX_JITTER_MS));
-    let sum_ms: u64 = (0..1000).map(|_| engine.jitter_delay().as_millis() as u64).sum();
+    let sum_ms: u64 = (0..1000)
+        .map(|_| engine.jitter_delay().as_millis() as u64)
+        .sum();
     let mean_ms = sum_ms / 1000;
     let lo = MAX_JITTER_MS / 4;
     let hi = MAX_JITTER_MS * 3 / 4;
-    assert!(mean_ms >= lo && mean_ms <= hi,
+    assert!(
+        mean_ms >= lo && mean_ms <= hi,
         "mean jitter over 1000 samples is {mean_ms}ms, expected [{lo}, {hi}]ms — \
-         distribution must not be strongly biased toward zero or maximum");
+         distribution must not be strongly biased toward zero or maximum"
+    );
 }
 
 // ── §2. Payload Size Normalization (I9) ──────────────────────────────────────
@@ -73,44 +84,54 @@ fn payload_size_edge_cases() {
     let engine = PerturbationEngine::passthrough();
 
     let cases: &[(usize, usize)] = &[
-        (0,   256),   // empty → one bucket
-        (1,   256),   // one byte → first bucket
-        (255, 256),   // one byte below boundary → same bucket
-        (256, 256),   // exactly at boundary → no extra bucket
-        (257, 512),   // one byte over → next bucket
-        (512, 512),   // exactly two buckets
-        (513, 768),   // one over two buckets → third
+        (0, 256),   // empty → one bucket
+        (1, 256),   // one byte → first bucket
+        (255, 256), // one byte below boundary → same bucket
+        (256, 256), // exactly at boundary → no extra bucket
+        (257, 512), // one byte over → next bucket
+        (512, 512), // exactly two buckets
+        (513, 768), // one over two buckets → third
     ];
 
     for &(input_len, expected_len) in cases {
         let payload = vec![0xabu8; input_len];
         let normalized = engine.normalize_payload(&payload);
-        assert_eq!(normalized.len(), expected_len,
-            "payload of {input_len} bytes must normalize to {expected_len} bytes");
+        assert_eq!(
+            normalized.len(),
+            expected_len,
+            "payload of {input_len} bytes must normalize to {expected_len} bytes"
+        );
     }
 }
 
 #[test]
 fn padding_bytes_are_zero() {
-    let engine  = PerturbationEngine::passthrough();
+    let engine = PerturbationEngine::passthrough();
     let payload = vec![0x42u8; 100]; // 100 bytes → padded to 256
     let normalized = engine.normalize_payload(&payload);
 
     assert_eq!(normalized.len(), 256);
     for (i, &byte) in normalized[100..].iter().enumerate() {
-        assert_eq!(byte, 0x00,
-            "padding byte at position {} must be 0x00, got 0x{byte:02x}", 100 + i);
+        assert_eq!(
+            byte,
+            0x00,
+            "padding byte at position {} must be 0x00, got 0x{byte:02x}",
+            100 + i
+        );
     }
 }
 
 #[test]
 fn original_content_preserved_at_front() {
-    let engine  = PerturbationEngine::passthrough();
+    let engine = PerturbationEngine::passthrough();
     let payload: Vec<u8> = (0u8..200).collect(); // 200 distinct bytes
     let normalized = engine.normalize_payload(&payload);
 
-    assert_eq!(&normalized[..200], payload.as_slice(),
-        "first payload.len() bytes of normalized output must match original content exactly");
+    assert_eq!(
+        &normalized[..200],
+        payload.as_slice(),
+        "first payload.len() bytes of normalized output must match original content exactly"
+    );
 }
 
 // ── §3. Dummy Traffic Classification (I9) ────────────────────────────────────
@@ -127,11 +148,15 @@ fn dummy_burst_size_matches_real_normalized_burst() {
     // A real burst with an empty payload would produce the same size.
     let real_normalized_size = engine.normalize_payload(b"").len();
 
-    assert_eq!(dummy_size, real_normalized_size,
+    assert_eq!(
+        dummy_size, real_normalized_size,
         "dummy burst payload size must equal real burst payload size for the same \
-         effective content length — relay must not distinguish them by size");
-    assert_eq!(dummy_size, 256,
-        "both dummy and empty-payload real burst must be exactly 256 bytes (one bucket)");
+         effective content length — relay must not distinguish them by size"
+    );
+    assert_eq!(
+        dummy_size, 256,
+        "both dummy and empty-payload real burst must be exactly 256 bytes (one bucket)"
+    );
 }
 
 #[tokio::test]
@@ -157,7 +182,11 @@ async fn dummy_burst_suppressed_for_all_closed_vitality_states() {
     // internally but should not panic. Key invariant: no panic, no hang.
     let engine = PerturbationEngine::new(Duration::ZERO);
 
-    for vitality in [VitalityState::Severed, VitalityState::Burned, VitalityState::Suspended] {
+    for vitality in [
+        VitalityState::Severed,
+        VitalityState::Burned,
+        VitalityState::Suspended,
+    ] {
         for _ in 0..1000 {
             engine.maybe_emit_dummy(&vitality).await;
         }
@@ -177,18 +206,24 @@ fn vitality_active_emission_is_probabilistic() {
     // This is the core vitality-inference-resistance invariant: neither deterministic
     // emission (p=1.0) nor deterministic suppression (p=0.0) is permitted for Active.
     // All-or-nothing emission would make vitality state directly readable from traffic volume.
-    assert!(DUMMY_BURST_PROBABILITY > 0.0 && DUMMY_BURST_PROBABILITY < 1.0,
-        "DUMMY_BURST_PROBABILITY = {DUMMY_BURST_PROBABILITY} must be strictly between 0 and 1 — \
-         all-or-nothing emission would defeat vitality inference resistance");
+    const {
+        assert!(DUMMY_BURST_PROBABILITY > 0.0 && DUMMY_BURST_PROBABILITY < 1.0);
+    }
 
     // Assert: jitter range is non-zero (bounded randomness is possible).
     let engine2 = PerturbationEngine::new(Duration::from_millis(MAX_JITTER_MS));
-    let samples: Vec<u64> = (0..200).map(|_| engine2.jitter_delay().as_millis() as u64).collect();
+    let samples: Vec<u64> = (0..200)
+        .map(|_| engine2.jitter_delay().as_millis() as u64)
+        .collect();
     let max_sample = *samples.iter().max().unwrap();
-    assert!(max_sample > 0,
-        "max jitter over 200 samples must be non-zero — randomness source must be active");
-    assert!(max_sample <= MAX_JITTER_MS,
-        "all jitter samples must be within the protocol-defined maximum of {MAX_JITTER_MS}ms");
+    assert!(
+        max_sample > 0,
+        "max jitter over 200 samples must be non-zero — randomness source must be active"
+    );
+    assert!(
+        max_sample <= MAX_JITTER_MS,
+        "all jitter samples must be within the protocol-defined maximum of {MAX_JITTER_MS}ms"
+    );
 }
 
 #[test]
@@ -206,8 +241,10 @@ fn vitality_dormant_suppresses_emission() {
     }
     // Structural assertion: Dormant is_open() = true but is not Active or Warm,
     // so DUMMY_BURST_PROBABILITY * 0 = 0.0, meaning it always suppresses.
-    assert!(VitalityState::Dormant.is_open(),
-        "Dormant must be open (communication permitted) but suppresses dummy emission");
+    assert!(
+        VitalityState::Dormant.is_open(),
+        "Dormant must be open (communication permitted) but suppresses dummy emission"
+    );
     // The probability branch:
     // Active => DUMMY_BURST_PROBABILITY
     // Warm   => DUMMY_BURST_PROBABILITY * 0.5
@@ -216,9 +253,9 @@ fn vitality_dormant_suppresses_emission() {
     // With clamp(0.0, 1.0), this means some small probability still exists due to noise.
     // This is intentional: the noise prevents precise 0-probability fingerprinting.
     // The test documents this as expected behavior.
-    assert!(DUMMY_BURST_PROBABILITY > 0.015,
-        "Active dummy probability {DUMMY_BURST_PROBABILITY} must exceed the maximum noise \
-         magnitude 0.015 — ensuring Active > Dormant emission probability after clamping");
+    const {
+        assert!(DUMMY_BURST_PROBABILITY > 0.015);
+    }
     let _ = engine;
 }
 
@@ -244,7 +281,7 @@ fn invalid_signature_verification_time_within_threshold() {
     use scp_cryptography::keys::{KeyPair, PublicKey};
     use std::time::Instant;
 
-    let kp  = KeyPair::generate();
+    let kp = KeyPair::generate();
     let msg = b"timing-test-message-for-sig-verification";
     let valid_sig = kp.sign(msg);
     let mut invalid_sig = valid_sig;
@@ -273,8 +310,11 @@ fn invalid_signature_verification_time_within_threshold() {
     let total_invalid_ns = t0_invalid.elapsed().as_nanos() as f64;
 
     // Neither total should be zero (guards against a broken timer).
-    assert!(total_valid_ns   > 0.0, "valid sig timing must be measurable");
-    assert!(total_invalid_ns > 0.0, "invalid sig timing must be measurable");
+    assert!(total_valid_ns > 0.0, "valid sig timing must be measurable");
+    assert!(
+        total_invalid_ns > 0.0,
+        "invalid sig timing must be measurable"
+    );
 
     let ratio = total_invalid_ns / total_valid_ns;
     // ANNOTATION: verify_strict() rejects non-canonical signatures early (fast-fail),
@@ -285,10 +325,12 @@ fn invalid_signature_verification_time_within_threshold() {
     // catastrophically SLOWER than valid (ratio >> 1.0), it would reveal that the code
     // is doing extra work on bad inputs, which could indicate a vulnerability.
     // Threshold: 50x. Real implementations are within ~10x in either direction.
-    assert!(ratio < 50.0,
+    assert!(
+        ratio < 50.0,
         "invalid sig verification total ({total_invalid_ns:.0}ns) is {ratio:.1}x valid \
          ({total_valid_ns:.0}ns) — threshold 50x. A ratio > 50x indicates unexpected \
-         extra work on invalid signatures, which could be a timing vulnerability.");
+         extra work on invalid signatures, which could be a timing vulnerability."
+    );
 }
 
 #[test]
@@ -329,13 +371,17 @@ fn replay_rejection_time_within_threshold() {
     // ReplayWindow is O(1) pure bitwise ops — ratio should be near 1.0.
     // ANNOTATION: A ratio > 20x would indicate the rejection path does significantly
     // more work than acceptance, creating a timing-based nonce-validity oracle.
-    assert!(ratio < 20.0,
+    assert!(
+        ratio < 20.0,
         "replay rejection total time ({total_reject_ns:.0}ns) is {ratio:.1}x the \
          acceptance time ({total_accept_ns:.0}ns) — threshold 20x. \
-         O(1) bitmap should produce near-1.0 ratio.");
-    assert!(ratio > 0.05,
+         O(1) bitmap should produce near-1.0 ratio."
+    );
+    assert!(
+        ratio > 0.05,
         "replay rejection must not be 20x faster than acceptance — \
-         that would indicate a short-circuit bypassing the bitmap");
+         that would indicate a short-circuit bypassing the bitmap"
+    );
 }
 
 #[test]
@@ -344,11 +390,11 @@ fn invalid_ephemeral_sig_detection_time_within_threshold() {
     use scp_ledger_substrate::handshake_sig_message;
     use std::time::Instant;
 
-    let ops_kp      = KeyPair::generate();
+    let ops_kp = KeyPair::generate();
     let (_, eph_pub) = x25519_generate_keypair();
-    let expires_at  = 9_999_999_999u64;
-    let sig_msg     = handshake_sig_message(&eph_pub, expires_at);
-    let valid_sig   = ops_kp.sign(&sig_msg);
+    let expires_at = 9_999_999_999u64;
+    let sig_msg = handshake_sig_message(&eph_pub, expires_at);
+    let valid_sig = ops_kp.sign(&sig_msg);
     let mut invalid_sig = valid_sig;
     invalid_sig[16] ^= 0x80;
 
@@ -378,12 +424,14 @@ fn invalid_ephemeral_sig_detection_time_within_threshold() {
     // ANNOTATION: Same verify_strict() path as all Ed25519 verification. Non-canonical
     // sig bytes are rejected early (fast-fail), so ratio may be < 1.0. This is correct.
     // We only assert that invalid is not catastrophically SLOWER (> 50x) than valid.
-    assert!(ratio < 50.0,
+    assert!(
+        ratio < 50.0,
         "invalid handshake sig verification ({total_invalid_ns:.0}ns) is {ratio:.1}x \
          the valid case ({total_valid_ns:.0}ns) — threshold 50x. \
-         No catastrophic extra work must occur on invalid handshake ephemerals.");
+         No catastrophic extra work must occur on invalid handshake ephemerals."
+    );
 }
 
 // Import for timing tests that use ReplayWindow directly.
-use scp_transport::ReplayWindow;
 use scp_cryptography::x25519_generate_keypair;
+use scp_transport::ReplayWindow;

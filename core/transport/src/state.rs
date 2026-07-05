@@ -20,8 +20,12 @@ pub trait StateProvider {
 pub struct StubStateProvider;
 
 impl StateProvider for StubStateProvider {
-    fn is_revoked(&self, _: &[u8; 32]) -> bool { false }
-    fn get_handshake_ephemeral(&self, _: &[u8; 32], _: u64) -> Option<PublishedHandshakeKey> { None }
+    fn is_revoked(&self, _: &[u8; 32]) -> bool {
+        false
+    }
+    fn get_handshake_ephemeral(&self, _: &[u8; 32], _: u64) -> Option<PublishedHandshakeKey> {
+        None
+    }
 }
 
 /// Real implementation backed by the in-memory Substrate ledger.
@@ -34,9 +38,17 @@ impl StateProvider for SubstrateLedger {
         SubstrateLedger::is_revoked(self, ops_pub)
     }
 
-    fn get_handshake_ephemeral(&self, ops_pub: &[u8; 32], now: u64) -> Option<PublishedHandshakeKey> {
+    fn get_handshake_ephemeral(
+        &self,
+        ops_pub: &[u8; 32],
+        now: u64,
+    ) -> Option<PublishedHandshakeKey> {
         let eph = SubstrateLedger::get_handshake_ephemeral(self, ops_pub, now)?;
         let sig: [u8; 64] = eph.sig[..].try_into().ok()?;
-        Some(PublishedHandshakeKey { pub_key: eph.pub_key, sig, expires_at: eph.expires_at })
+        Some(PublishedHandshakeKey {
+            pub_key: eph.pub_key,
+            sig,
+            expires_at: eph.expires_at,
+        })
     }
 }

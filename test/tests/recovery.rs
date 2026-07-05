@@ -23,21 +23,33 @@ async fn dissolved_session_leaves_no_reusable_route() {
     use scp_transport::flash::FlashSession;
     use scp_transport::StubStateProvider;
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let session = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&StubStateProvider, &[0xddu8; 32]).await.unwrap(),
-        b"blast-radius-test", &cache, &engine,
-    ).await.expect("session must open");
+        FlashSession::retrieve_state(&StubStateProvider, &[0xddu8; 32])
+            .await
+            .unwrap(),
+        b"blast-radius-test",
+        &cache,
+        &engine,
+    )
+    .await
+    .expect("session must open");
 
-    let route_id   = session.route.0;
+    let route_id = session.route.0;
     let key_before = session.session_key.0;
-    assert_ne!(key_before, [0u8; 32], "session key must be non-zero before dissolution");
+    assert_ne!(
+        key_before, [0u8; 32],
+        "session key must be non-zero before dissolution"
+    );
 
     // Verify cache holds the key before dissolution.
-    assert_eq!(cache.get(&route_id), Some(key_before),
-        "warm cache must hold the session key before dissolution");
+    assert_eq!(
+        cache.get(&route_id),
+        Some(key_before),
+        "warm cache must hold the session key before dissolution"
+    );
 
     let _proof = session.dissolve();
 
@@ -46,12 +58,17 @@ async fn dissolved_session_leaves_no_reusable_route() {
     // The correct mitigation is cache.purge() before dissolve() in high-security contexts.
     // This test documents that behavior explicitly.
     let post_dissolve = cache.get(&route_id);
-    assert!(post_dissolve.is_some(),
+    assert!(
+        post_dissolve.is_some(),
         "warm cache retains the key after dissolution (TTL-based expiry) — \
-         in high-security contexts, call cache.purge() before dissolve() to evict immediately");
-    assert_eq!(post_dissolve.unwrap(), key_before,
+         in high-security contexts, call cache.purge() before dissolve() to evict immediately"
+    );
+    assert_eq!(
+        post_dissolve.unwrap(),
+        key_before,
         "warm cache entry must match the original session key — the cache is an \
-         independent copy; it is not affected by the session's Drop-based zeroing");
+         independent copy; it is not affected by the session's Drop-based zeroing"
+    );
 }
 
 #[tokio::test]
@@ -61,24 +78,35 @@ async fn warm_cache_key_expires_after_purge() {
     use scp_transport::flash::FlashSession;
     use scp_transport::StubStateProvider;
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let session = FlashSession::open_and_send(
-        FlashSession::retrieve_state(&StubStateProvider, &[0xeeu8; 32]).await.unwrap(),
-        b"purge-test", &cache, &engine,
-    ).await.expect("session must open");
+        FlashSession::retrieve_state(&StubStateProvider, &[0xeeu8; 32])
+            .await
+            .unwrap(),
+        b"purge-test",
+        &cache,
+        &engine,
+    )
+    .await
+    .expect("session must open");
 
     let route_id = session.route.0;
-    assert!(cache.get(&route_id).is_some(), "cache must be populated before purge");
+    assert!(
+        cache.get(&route_id).is_some(),
+        "cache must be populated before purge"
+    );
 
     // Immediate eviction — correct high-security dissolution pattern.
     cache.purge();
     let _proof = session.dissolve();
 
-    assert!(cache.get(&route_id).is_none(),
+    assert!(
+        cache.get(&route_id).is_none(),
         "cache.purge() must immediately evict all warm entries — \
-         no reusable session state remains after high-security dissolution");
+         no reusable session state remains after high-security dissolution"
+    );
 }
 
 #[tokio::test]
@@ -89,23 +117,32 @@ async fn multiple_session_keys_statistically_independent() {
     use scp_transport::StubStateProvider;
     use std::collections::HashSet;
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let mut keys: Vec<[u8; 32]> = Vec::new();
     for i in 0u8..20 {
         let session = FlashSession::open_and_send(
-            FlashSession::retrieve_state(&StubStateProvider, &[i; 32]).await.unwrap(),
-            b"independence-test", &cache, &engine,
-        ).await.expect("session must open");
+            FlashSession::retrieve_state(&StubStateProvider, &[i; 32])
+                .await
+                .unwrap(),
+            b"independence-test",
+            &cache,
+            &engine,
+        )
+        .await
+        .expect("session must open");
         keys.push(session.session_key.0);
         let _ = session.dissolve();
     }
 
     let unique: HashSet<[u8; 32]> = keys.iter().copied().collect();
-    assert_eq!(unique.len(), 20,
+    assert_eq!(
+        unique.len(),
+        20,
         "20 sessions with the same recipient ops_pub must produce 20 distinct session keys — \
-         compromising one session reveals nothing about co-existing or past sessions");
+         compromising one session reveals nothing about co-existing or past sessions"
+    );
 }
 
 // ── §2. Relay Failure / Chaos (I10) ──────────────────────────────────────────
@@ -115,16 +152,19 @@ async fn multiple_session_keys_statistically_independent() {
 
 #[tokio::test]
 async fn relay_connection_refused_fails_cleanly() {
-    use scp_relay_mesh::{RelayNode, route_burst, MeshError};
+    use scp_relay_mesh::{route_burst, MeshError, RelayNode};
 
     // Port 1 is almost universally refused or privileged — guaranteed to fail.
     let deaf_relay = RelayNode {
-        id:       [0u8; 16],
+        id: [0u8; 16],
         endpoint: "127.0.0.1:1".to_string(),
     };
     let result = route_burst(b"should-fail".to_vec(), vec![deaf_relay]).await;
     assert!(
-        matches!(result, Err(MeshError::RelayRefused) | Err(MeshError::Timeout)),
+        matches!(
+            result,
+            Err(MeshError::RelayRefused) | Err(MeshError::Timeout)
+        ),
         "connection refused must produce RelayRefused or Timeout — not a panic or hang"
     );
 }
@@ -142,19 +182,21 @@ async fn empty_relay_list_returns_no_route() {
 
 #[tokio::test]
 async fn relay_malformed_address_fails_cleanly() {
-    use scp_relay_mesh::{RelayNode, route_burst};
+    use scp_relay_mesh::{route_burst, RelayNode};
 
     // Malformed endpoint that cannot be parsed as a socket address.
     // blind_relay() falls back to BlindRelay::local() for unparseable addresses.
     let bad_relay = RelayNode {
-        id:       [0u8; 16],
+        id: [0u8; 16],
         endpoint: "not-an-address".to_string(),
     };
     // Local fallback accepts everything — malformed addresses are silently handled.
     let result = route_burst(b"malformed-test".to_vec(), vec![bad_relay]).await;
-    assert!(result.is_ok(),
+    assert!(
+        result.is_ok(),
         "malformed relay endpoint must not panic — falls back to local blind relay, \
-         which accepts any opaque payload");
+         which accepts any opaque payload"
+    );
 }
 
 #[tokio::test]
@@ -175,20 +217,22 @@ async fn flash_session_relay_failure_returns_transmission_failed() {
     //
     // What we test here: the error type is correct and the session closes cleanly
     // under all exit paths (both Ok and Err variants).
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     // v1 path (no handshake ephemeral) — succeeds with local relay.
     let state = RecipientState {
-        ops_pub:           [0x30u8; 32],
-        vitality:          VitalityState::Active,
-        routing_hints:     vec![],
+        ops_pub: [0x30u8; 32],
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
         handshake_ephemeral: None,
     };
     let result = FlashSession::open_and_send(state, b"relay-test", &cache, &engine).await;
     match result {
-        Ok(session)                                => { let _ = session.dissolve(); }
-        Err(TransportError::TransmissionFailed)    => { /* relay failure — expected path */ }
+        Ok(session) => {
+            let _ = session.dissolve();
+        }
+        Err(TransportError::TransmissionFailed) => { /* relay failure — expected path */ }
         Err(e) => panic!("unexpected error: {e}"),
     }
 }

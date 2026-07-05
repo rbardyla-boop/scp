@@ -20,6 +20,7 @@
 //   identity_created, mailbox_created, burst_stored, payload_decrypted,
 //   exchange_complete, error
 
+use rand_core::{OsRng, RngCore};
 use scp_cryptography::keys::{KeyPair, PublicKey};
 use scp_cryptography::x25519_generate_keypair;
 use scp_provider_delivery::{DeliveryEndpoint, DeliveryPool, DeliveryRoute, RelayEndpoint};
@@ -30,18 +31,17 @@ use scp_transport::harness::{
 };
 use scp_wire_format::signing::handshake_sig_message;
 use serde::{Deserialize, Serialize};
-use rand_core::{OsRng, RngCore};
 use std::io::Write;
 
 // ── Identity file (private, 0600) ─────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize)]
 struct IdentityFile {
-    ops_pub:              String, // 64 hex chars (Ed25519 public)
-    ops_priv:             String, // 64 hex chars (Ed25519 secret) — KEEP SECRET
-    handshake_pub:        String, // 64 hex chars (X25519 public)
-    handshake_priv:       String, // 64 hex chars (X25519 secret) — KEEP SECRET
-    handshake_sig:        String, // 128 hex chars (ops signs handshake_pub + expires_at)
+    ops_pub: String,        // 64 hex chars (Ed25519 public)
+    ops_priv: String,       // 64 hex chars (Ed25519 secret) — KEEP SECRET
+    handshake_pub: String,  // 64 hex chars (X25519 public)
+    handshake_priv: String, // 64 hex chars (X25519 secret) — KEEP SECRET
+    handshake_sig: String,  // 128 hex chars (ops signs handshake_pub + expires_at)
     handshake_expires_at: u64,
 }
 
@@ -49,9 +49,9 @@ struct IdentityFile {
 
 #[derive(Serialize, Deserialize)]
 struct ContactCard {
-    ops_pub:              String,
-    handshake_pub:        String,
-    handshake_sig:        String,
+    ops_pub: String,
+    handshake_pub: String,
+    handshake_sig: String,
     handshake_expires_at: u64,
 }
 
@@ -65,11 +65,11 @@ async fn main() {
         std::process::exit(1);
     }
     let result = match args[1].as_str() {
-        "keygen"      => cmd_keygen(&args[2..]),
-        "public"      => cmd_public(&args[2..]),
+        "keygen" => cmd_keygen(&args[2..]),
+        "public" => cmd_public(&args[2..]),
         "mailbox-new" => cmd_mailbox_new(),
-        "send"        => cmd_send(&args[2..]).await,
-        "receive"     => cmd_receive(&args[2..]).await,
+        "send" => cmd_send(&args[2..]).await,
+        "receive" => cmd_receive(&args[2..]).await,
         other => {
             eprintln!("{{\"event\":\"error\",\"reason\":\"unknown command: {other}\"}}");
             std::process::exit(1);
@@ -86,7 +86,7 @@ async fn main() {
 fn cmd_keygen(args: &[String]) -> Result<(), String> {
     let out = require_arg(args, "--out")?;
 
-    let ops_kp   = KeyPair::generate();
+    let ops_kp = KeyPair::generate();
     let (hs_priv, hs_pub) = x25519_generate_keypair();
 
     let expires_at = std::time::SystemTime::now()
@@ -96,28 +96,27 @@ fn cmd_keygen(args: &[String]) -> Result<(), String> {
         + 86400; // 24-hour default TTL for dev harness
 
     let sig_msg = handshake_sig_message(&hs_pub, expires_at);
-    let sig     = ops_kp.sign(&sig_msg);
+    let sig = ops_kp.sign(&sig_msg);
 
     let identity = IdentityFile {
-        ops_pub:              hex_encode(&ops_kp.public),
-        ops_priv:             hex_encode(&ops_kp.secret),
-        handshake_pub:        hex_encode(&hs_pub),
-        handshake_priv:       hex_encode(&hs_priv),
-        handshake_sig:        hex_encode(&sig),
+        ops_pub: hex_encode(&ops_kp.public),
+        ops_priv: hex_encode(&ops_kp.secret),
+        handshake_pub: hex_encode(&hs_pub),
+        handshake_priv: hex_encode(&hs_priv),
+        handshake_sig: hex_encode(&sig),
         handshake_expires_at: expires_at,
     };
 
     let json = serde_json::to_string_pretty(&identity)
         .map_err(|e| format!("JSON serialization failed: {e}"))?;
 
-    write_secret_file(&out, json.as_bytes())
-        .map_err(|e| format!("write identity file: {e}"))?;
+    write_secret_file(&out, json.as_bytes()).map_err(|e| format!("write identity file: {e}"))?;
 
     // Print the public card to stdout so the user can share it with senders.
     let card = ContactCard {
-        ops_pub:              hex_encode(&ops_kp.public),
-        handshake_pub:        hex_encode(&hs_pub),
-        handshake_sig:        hex_encode(&sig),
+        ops_pub: hex_encode(&ops_kp.public),
+        handshake_pub: hex_encode(&hs_pub),
+        handshake_sig: hex_encode(&sig),
         handshake_expires_at: expires_at,
     };
     let card_event = serde_json::json!({
@@ -163,20 +162,20 @@ fn cmd_mailbox_new() -> Result<(), String> {
 
 async fn cmd_send(args: &[String]) -> Result<(), String> {
     let identity_path = require_arg(args, "--identity")?;
-    let card_path     = require_arg(args, "--recipient")?;
-    let relay_addrs   = collect_relays(args)?;
-    let mailbox_hex   = require_arg(args, "--mailbox")?;
-    let message       = require_arg(args, "--message")?;
+    let card_path = require_arg(args, "--recipient")?;
+    let relay_addrs = collect_relays(args)?;
+    let mailbox_hex = require_arg(args, "--mailbox")?;
+    let message = require_arg(args, "--message")?;
 
     let _identity = load_identity(&identity_path)?;
-    let card      = load_card(&card_path)?;
+    let card = load_card(&card_path)?;
 
-    let ops_pub  = parse_hex32(&card.ops_pub, "ops_pub")?;
-    let hs_pub   = parse_hex32(&card.handshake_pub, "handshake_pub")?;
+    let ops_pub = parse_hex32(&card.ops_pub, "ops_pub")?;
+    let hs_pub = parse_hex32(&card.handshake_pub, "handshake_pub")?;
 
     // Verify the recipient's handshake key signature using their ops key.
-    let sig_msg    = handshake_sig_message(&hs_pub, card.handshake_expires_at);
-    let sig_bytes  = hex_decode(&card.handshake_sig).map_err(|e| format!("{e}"))?;
+    let sig_msg = handshake_sig_message(&hs_pub, card.handshake_expires_at);
+    let sig_bytes = hex_decode(&card.handshake_sig).map_err(|e| format!("{e}"))?;
     let mut sig_arr = [0u8; 64];
     if sig_bytes.len() != 64 {
         return Err("handshake_sig must be 64 bytes".to_string());
@@ -186,8 +185,7 @@ async fn cmd_send(args: &[String]) -> Result<(), String> {
         return Err("recipient handshake key signature verification failed".to_string());
     }
 
-    let mailbox_id = DevMailboxId::from_hex(&mailbox_hex)
-        .map_err(|e| format!("{e}"))?;
+    let mailbox_id = DevMailboxId::from_hex(&mailbox_hex).map_err(|e| format!("{e}"))?;
 
     let burst = send_harness_direct(&ops_pub, &hs_pub, message.as_bytes());
     let route_id_hex = hex_encode(&burst.route_id);
@@ -232,15 +230,14 @@ async fn cmd_send(args: &[String]) -> Result<(), String> {
 
 async fn cmd_receive(args: &[String]) -> Result<(), String> {
     let identity_path = require_arg(args, "--identity")?;
-    let relay_addrs   = collect_relays(args)?;
-    let mailbox_hex   = require_arg(args, "--mailbox")?;
+    let relay_addrs = collect_relays(args)?;
+    let mailbox_hex = require_arg(args, "--mailbox")?;
 
     let identity = load_identity(&identity_path)?;
-    let ops_pub  = parse_hex32(&identity.ops_pub, "ops_pub")?;
-    let hs_priv  = parse_hex32(&identity.handshake_priv, "handshake_priv")?;
+    let ops_pub = parse_hex32(&identity.ops_pub, "ops_pub")?;
+    let hs_priv = parse_hex32(&identity.handshake_priv, "handshake_priv")?;
 
-    let mailbox_id = DevMailboxId::from_hex(&mailbox_hex)
-        .map_err(|e| format!("{e}"))?;
+    let mailbox_id = DevMailboxId::from_hex(&mailbox_hex).map_err(|e| format!("{e}"))?;
 
     // R1 (design §2.2): poll-any across every currently-live selected relay,
     // deduplicating by route_id (the same burst may be visible on more than
@@ -340,8 +337,7 @@ fn collect_relays(args: &[String]) -> Result<Vec<String>, String> {
 
 fn build_delivery_pool(relay_addrs: &[String]) -> DeliveryPool<RelayEndpoint> {
     let k = relay_addrs.len();
-    let mut pool = DeliveryPool::new(SamplingStrategy::RandomK(k), k * 4)
-        .with_liveness(2, 60);
+    let mut pool = DeliveryPool::new(SamplingStrategy::RandomK(k), k * 4).with_liveness(2, 60);
     for addr in relay_addrs {
         // endpoint_id is a fresh random operator-assigned tag — never derived
         // from addr (design §3.2: keeps pool internals address-free).
@@ -368,7 +364,8 @@ fn select_relay_routes(
     pool: &mut DeliveryPool<RelayEndpoint>,
 ) -> Result<Vec<DeliveryRoute<RelayEndpoint>>, String> {
     let mut rng = OsRng;
-    pool.select_route(&mut rng).map_err(|e| format!("relay selection: {e:?}"))
+    pool.select_route(&mut rng)
+        .map_err(|e| format!("relay selection: {e:?}"))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -385,28 +382,35 @@ fn require_arg(args: &[String], flag: &str) -> Result<String, String> {
 }
 
 fn load_identity(path: &str) -> Result<IdentityFile, String> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|e| format!("read identity file '{path}': {e}"))?;
-    serde_json::from_str(&contents)
-        .map_err(|e| format!("parse identity file '{path}': {e}"))
+    let contents =
+        std::fs::read_to_string(path).map_err(|e| format!("read identity file '{path}': {e}"))?;
+    serde_json::from_str(&contents).map_err(|e| format!("parse identity file '{path}': {e}"))
 }
 
 fn load_card(path: &str) -> Result<ContactCard, String> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|e| format!("read card file '{path}': {e}"))?;
+    let contents =
+        std::fs::read_to_string(path).map_err(|e| format!("read card file '{path}': {e}"))?;
     // The card may be the raw ContactCard JSON, or the full identity_created event JSON.
     // Try ContactCard first; fall back to extracting from event JSON.
     if let Ok(card) = serde_json::from_str::<ContactCard>(&contents) {
         return Ok(card);
     }
     // Try as event JSON (has an "event" field plus the card fields)
-    let v: serde_json::Value = serde_json::from_str(&contents)
-        .map_err(|e| format!("parse card file '{path}': {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_str(&contents).map_err(|e| format!("parse card file '{path}': {e}"))?;
     Ok(ContactCard {
-        ops_pub:              v["ops_pub"].as_str().ok_or("missing ops_pub")?.to_string(),
-        handshake_pub:        v["handshake_pub"].as_str().ok_or("missing handshake_pub")?.to_string(),
-        handshake_sig:        v["handshake_sig"].as_str().ok_or("missing handshake_sig")?.to_string(),
-        handshake_expires_at: v["handshake_expires_at"].as_u64().ok_or("missing handshake_expires_at")?,
+        ops_pub: v["ops_pub"].as_str().ok_or("missing ops_pub")?.to_string(),
+        handshake_pub: v["handshake_pub"]
+            .as_str()
+            .ok_or("missing handshake_pub")?
+            .to_string(),
+        handshake_sig: v["handshake_sig"]
+            .as_str()
+            .ok_or("missing handshake_sig")?
+            .to_string(),
+        handshake_expires_at: v["handshake_expires_at"]
+            .as_u64()
+            .ok_or("missing handshake_expires_at")?,
     })
 }
 
@@ -447,12 +451,22 @@ mod tests {
     #[test]
     fn collect_relays_gathers_repeated_flag() {
         let a = args(&["--relay", "127.0.0.1:7700", "--relay", "127.0.0.1:7701"]);
-        assert_eq!(collect_relays(&a).unwrap(), vec!["127.0.0.1:7700", "127.0.0.1:7701"]);
+        assert_eq!(
+            collect_relays(&a).unwrap(),
+            vec!["127.0.0.1:7700", "127.0.0.1:7701"]
+        );
     }
 
     #[test]
     fn collect_relays_single_flag_still_works() {
-        let a = args(&["--identity", "x.key", "--relay", "127.0.0.1:7700", "--mailbox", "abc"]);
+        let a = args(&[
+            "--identity",
+            "x.key",
+            "--relay",
+            "127.0.0.1:7700",
+            "--mailbox",
+            "abc",
+        ]);
         assert_eq!(collect_relays(&a).unwrap(), vec!["127.0.0.1:7700"]);
     }
 

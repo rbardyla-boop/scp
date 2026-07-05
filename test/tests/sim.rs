@@ -38,7 +38,7 @@
 
 use std::time::Duration;
 
-use rand_core::OsRng;
+use rand::{rngs::StdRng, SeedableRng};
 use scp_ledger_substrate::SubstrateLedger;
 use scp_provider_pool::{
     ChurnBudget, EpochPhase, EvictionConfig, EvictionReason, ExposureResetPolicy,
@@ -63,7 +63,7 @@ struct EpochTrace {
 struct PoolSimulator {
     pool: ProviderPool<SubstrateLedger>,
     trace: Vec<EpochTrace>,
-    rng: OsRng,
+    rng: StdRng,
 }
 
 impl PoolSimulator {
@@ -71,7 +71,7 @@ impl PoolSimulator {
         Self {
             pool,
             trace: Vec::new(),
-            rng: OsRng,
+            rng: StdRng::seed_from_u64(0x5c0f_2026),
         }
     }
 
@@ -980,7 +980,7 @@ fn sim_t4_window_closes_with_sufficient_post_reset_samples() {
 
 #[test]
 fn sim_tick_behavioral_identity_across_phases() {
-    let mut rng = OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0021);
 
     let make_pool = || {
         let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
@@ -1030,7 +1030,7 @@ fn sim_tick_behavioral_identity_across_phases() {
 
 #[test]
 fn sim_tick_faithfully_wraps_maybe_rotate() {
-    let mut rng = OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0022);
 
     let make_pool = || {
         let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
@@ -1084,7 +1084,7 @@ fn sim_tick_faithfully_wraps_maybe_rotate() {
 
 #[test]
 fn sim_burst_triggered_threshold_always_met_produces_rotation() {
-    let mut rng = OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0023);
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_rotation(
@@ -1122,7 +1122,7 @@ fn sim_burst_triggered_threshold_always_met_produces_rotation() {
 
 #[test]
 fn sim_burst_triggered_response_jitter_reduces_rotation_count() {
-    let mut rng = OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0024);
     // Use a short jitter so the test can also verify eventual firing without a long sleep.
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
@@ -1408,7 +1408,8 @@ fn sim_kappa_displacement_alias_agrees_with_kappa_velocity() {
     );
 
     // After force_rotate: baseline established; both must agree.
-    pool.force_rotate(&mut OsRng);
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0025);
+    pool.force_rotate(&mut rng);
     let cp = pool.convergence_pressure();
     assert_eq!(
         cp.kappa_displacement_since_rotation(),
@@ -2708,8 +2709,12 @@ fn sim_s47_eviction_recovery_scales_without_t2_instability() {
     }
     // Dormant floor gate: dormant.len() - 1 ≥ active_window (8). With 10 dormant,
     // first eviction: 9 ≥ 8 (OK). Second: 8 ≥ 8 (OK). Both succeed regardless of tier.
-    let _ = sim.pool.evict(&[0u8; 32], EvictionReason::LivenessExhausted);
-    let _ = sim.pool.evict(&[1u8; 32], EvictionReason::LivenessExhausted);
+    let _ = sim
+        .pool
+        .evict(&[0u8; 32], EvictionReason::LivenessExhausted);
+    let _ = sim
+        .pool
+        .evict(&[1u8; 32], EvictionReason::LivenessExhausted);
 
     // Add 2 replacement providers: they fill active vacancies when active < active_window.
     sim.pool.add([200u8; 32], SubstrateLedger::new());
@@ -2794,12 +2799,16 @@ fn sim_s48_on_rotation_freshness_vs_never_under_hard_failure() {
     let (pool_f, warm_f) = make_pool(0);
 
     let mut sim_diluted = PoolSimulator::new(pool_d);
-    let mut sim_fresh   = PoolSimulator::new(pool_f);
+    let mut sim_fresh = PoolSimulator::new(pool_f);
 
     // Phase 1: warm epochs (1 000 for diluted, 0 for fresh).
     // With 1 000 samples, [1;32] accumulates ≈ 250 appearances.
-    for _ in 0..warm_d { sim_diluted.run_epoch(1); }
-    for _ in 0..warm_f { sim_fresh.run_epoch(1); }
+    for _ in 0..warm_d {
+        sim_diluted.run_epoch(1);
+    }
+    for _ in 0..warm_f {
+        sim_fresh.run_epoch(1);
+    }
 
     // Phase 2: hard-fail provider [1;32] in both pools.
     for _ in 0..5 {
@@ -2816,9 +2825,9 @@ fn sim_s48_on_rotation_freshness_vs_never_under_hard_failure() {
     }
 
     let kappa_diluted = sim_diluted.last_kappa();
-    let kappa_fresh   = sim_fresh.last_kappa();
-    let mt1_diluted   = sim_diluted.margin_t1();
-    let mt1_fresh     = sim_fresh.margin_t1();
+    let kappa_fresh = sim_fresh.last_kappa();
+    let mt1_diluted = sim_diluted.margin_t1();
+    let mt1_fresh = sim_fresh.margin_t1();
 
     // Fresh window reveals the absent provider more clearly.
     assert!(
@@ -2873,7 +2882,10 @@ fn sim_s49_on_rotation_freshness_vs_never_under_silent_failure() {
             .with_active_window(4)
             .with_rotation(
                 PoolRotationPolicy::QueryCount(50),
-                ChurnBudget { min_churn: 1, max_churn: 1 },
+                ChurnBudget {
+                    min_churn: 1,
+                    max_churn: 1,
+                },
             )
             .with_exposure_reset_policy(reset);
         for i in 0..8u8 {
@@ -2930,8 +2942,8 @@ fn sim_s49_on_rotation_freshness_vs_never_under_silent_failure() {
     sim_never.run_epoch(1000);
     sim_onrot.run_epoch(1000);
 
-    let never_last  = sim_never.trace.last().unwrap();
-    let onrot_last  = sim_onrot.trace.last().unwrap();
+    let never_last = sim_never.trace.last().unwrap();
+    let onrot_last = sim_onrot.trace.last().unwrap();
 
     // Selection stays uniform in both — κ does not detect silent failure.
     assert!(
@@ -3009,12 +3021,14 @@ fn sim_s50_bounded_freshness_restores_detection_if_supported() {
     };
 
     // pool_never: Long warm history = Never policy equivalent.
-    let mut pool_never = {
+    let pool_never = {
         let mut p = ProviderPool::new(SamplingStrategy::RandomK(1))
             .with_active_window(4)
             .with_liveness(5, 3600)
             .with_exposure_reset_policy(ExposureResetPolicy::Never);
-        for i in 0..4u8 { p.add([i; 32], SubstrateLedger::new()); }
+        for i in 0..4u8 {
+            p.add([i; 32], SubstrateLedger::new());
+        }
         p
     };
     let mut sim_never = PoolSimulator::new(pool_never);
@@ -3025,8 +3039,12 @@ fn sim_s50_bounded_freshness_restores_detection_if_supported() {
     // Phase 1: warm epochs.
     //   sim_never: 1 000 warm epochs → [1;32] accumulates ≈ 250 appearances.
     //   sim_bounded: 10 warm epochs  → [1;32] accumulates ≈ 2.5 appearances.
-    for _ in 0..1_000 { sim_never.run_epoch(1); }
-    for _ in 0..warm_b { sim_bounded.run_epoch(1); }
+    for _ in 0..1_000 {
+        sim_never.run_epoch(1);
+    }
+    for _ in 0..warm_b {
+        sim_bounded.run_epoch(1);
+    }
 
     // Phase 2: hard-fail provider [1;32] in both.
     for _ in 0..5 {
@@ -3042,10 +3060,10 @@ fn sim_s50_bounded_freshness_restores_detection_if_supported() {
         sim_bounded.run_epoch(1);
     }
 
-    let kappa_never   = sim_never.last_kappa();
+    let kappa_never = sim_never.last_kappa();
     let kappa_bounded = sim_bounded.last_kappa();
-    let mt1_never     = sim_never.margin_t1();
-    let mt1_bounded   = sim_bounded.margin_t1();
+    let mt1_never = sim_never.margin_t1();
+    let mt1_bounded = sim_bounded.margin_t1();
 
     // Bounded freshness raises κ well above the Never-diluted baseline.
     assert!(
@@ -3095,7 +3113,10 @@ fn sim_s51_freshness_does_not_false_trigger_after_benign_silence() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::QueryCount(50),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset_policy(ExposureResetPolicy::OnRotation);
     for i in 0..8u8 {
@@ -3165,10 +3186,34 @@ fn sim_s52_kappa_t1_boundary_matches_survivor_set_math() {
     }
 
     let cases = [
-        Case { n: 4, fail_count: 1, expected_kappa: 0.207, t1_must_fire: false, label: "n=4 s=3 (1/4 fail)" },
-        Case { n: 4, fail_count: 3, expected_kappa: 1.000, t1_must_fire: true,  label: "n=4 s=1 (3/4 fail)" },
-        Case { n: 8, fail_count: 4, expected_kappa: 0.333, t1_must_fire: false, label: "n=8 s=4 (1/2 fail)" },
-        Case { n: 8, fail_count: 6, expected_kappa: 0.667, t1_must_fire: true,  label: "n=8 s=2 (3/4 fail)" },
+        Case {
+            n: 4,
+            fail_count: 1,
+            expected_kappa: 0.207,
+            t1_must_fire: false,
+            label: "n=4 s=3 (1/4 fail)",
+        },
+        Case {
+            n: 4,
+            fail_count: 3,
+            expected_kappa: 1.000,
+            t1_must_fire: true,
+            label: "n=4 s=1 (3/4 fail)",
+        },
+        Case {
+            n: 8,
+            fail_count: 4,
+            expected_kappa: 0.333,
+            t1_must_fire: false,
+            label: "n=8 s=4 (1/2 fail)",
+        },
+        Case {
+            n: 8,
+            fail_count: 6,
+            expected_kappa: 0.667,
+            t1_must_fire: true,
+            label: "n=8 s=2 (3/4 fail)",
+        },
     ];
 
     for case in &cases {
@@ -3200,7 +3245,9 @@ fn sim_s52_kappa_t1_boundary_matches_survivor_set_math() {
         assert!(
             (kappa - case.expected_kappa).abs() < 0.08,
             "§S52 {}: expected κ ≈ {:.3}, got {:.4}",
-            case.label, case.expected_kappa, kappa
+            case.label,
+            case.expected_kappa,
+            kappa
         );
 
         if case.t1_must_fire {
@@ -3259,7 +3306,8 @@ fn sim_s53_partial_failure_is_not_mislabeled_as_t1_collapse() {
         mt1 > 0.0,
         "§S53: T1 must not fire for moderate (1/4) failure at n=4; \
          margin_t1 = {:.4}, κ = {:.4}",
-        mt1, kappa
+        mt1,
+        kappa
     );
 }
 
@@ -3270,8 +3318,7 @@ fn sim_s53_partial_failure_is_not_mislabeled_as_t1_collapse() {
 // This preserves the Phase 38R finding under Phase 39's taxonomy.
 #[test]
 fn sim_s54_asymmetric_silent_failure_elevates_liveness_weighted_kappa() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
@@ -3301,14 +3348,17 @@ fn sim_s54_asymmetric_silent_failure_elevates_liveness_weighted_kappa() {
         lwk > 0.50,
         "§S54: asymmetric silent failure must elevate liveness_weighted_κ; \
          lwk = {:.4}, κ = {:.4}",
-        lwk, kappa
+        lwk,
+        kappa
     );
     // Gap must be clearly separating the two signals.
     assert!(
         lwk - kappa > 0.40,
         "§S54: gap between liveness_weighted_κ and κ must exceed 0.40; \
          lwk = {:.4}, κ = {:.4}, gap = {:.4}",
-        lwk, kappa, lwk - kappa
+        lwk,
+        kappa,
+        lwk - kappa
     );
 }
 
@@ -3319,8 +3369,7 @@ fn sim_s54_asymmetric_silent_failure_elevates_liveness_weighted_kappa() {
 // response_rate = total_responses / total_samples (computed from explicit counts in the test).
 #[test]
 fn sim_s55_symmetric_global_failure_is_invisible_to_entropy_metrics() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
@@ -3378,15 +3427,14 @@ fn sim_s55_symmetric_global_failure_is_invisible_to_entropy_metrics() {
 #[test]
 fn sim_s56_absolute_availability_signal_detects_symmetric_failure() {
     let make_pool = || {
-        let mut p = ProviderPool::new(SamplingStrategy::RandomK(1))
-            .with_active_window(4);
+        let mut p = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
         for i in 0..4u8 {
             p.add([i; 32], SubstrateLedger::new());
         }
         p
     };
 
-    let mut sim_healthy  = PoolSimulator::new(make_pool());
+    let mut sim_healthy = PoolSimulator::new(make_pool());
     let mut sim_degraded = PoolSimulator::new(make_pool());
 
     let total_samples: u64 = 400;
@@ -3417,18 +3465,30 @@ fn sim_s56_absolute_availability_signal_detects_symmetric_failure() {
     let h_last = sim_healthy.trace.last().unwrap();
     let d_last = sim_degraded.trace.last().unwrap();
 
-    let rate_healthy  = responses_healthy  as f64 / total_samples as f64;
+    let rate_healthy = responses_healthy as f64 / total_samples as f64;
     let rate_degraded = responses_degraded as f64 / total_samples as f64;
 
     // Both entropy metrics are near zero for both pools.
-    assert!(h_last.kappa < 0.10,
-        "§S56: healthy pool κ must be near zero; κ = {:.4}", h_last.kappa);
-    assert!(d_last.kappa < 0.10,
-        "§S56: degraded pool κ must be near zero; κ = {:.4}", d_last.kappa);
-    assert!(h_last.liveness_weighted_kappa < 0.10,
-        "§S56: healthy pool lwk must be near zero; lwk = {:.4}", h_last.liveness_weighted_kappa);
-    assert!(d_last.liveness_weighted_kappa < 0.10,
-        "§S56: degraded pool lwk must be near zero; lwk = {:.4}", d_last.liveness_weighted_kappa);
+    assert!(
+        h_last.kappa < 0.10,
+        "§S56: healthy pool κ must be near zero; κ = {:.4}",
+        h_last.kappa
+    );
+    assert!(
+        d_last.kappa < 0.10,
+        "§S56: degraded pool κ must be near zero; κ = {:.4}",
+        d_last.kappa
+    );
+    assert!(
+        h_last.liveness_weighted_kappa < 0.10,
+        "§S56: healthy pool lwk must be near zero; lwk = {:.4}",
+        h_last.liveness_weighted_kappa
+    );
+    assert!(
+        d_last.liveness_weighted_kappa < 0.10,
+        "§S56: degraded pool lwk must be near zero; lwk = {:.4}",
+        d_last.liveness_weighted_kappa
+    );
 
     // But response rates differ sharply — only the availability proxy distinguishes them.
     assert!(
@@ -3445,7 +3505,9 @@ fn sim_s56_absolute_availability_signal_detects_symmetric_failure() {
         rate_healthy - rate_degraded > 0.80,
         "§S56: availability proxy must separate healthy from degraded by > 0.80; \
          healthy = {:.4}, degraded = {:.4}, gap = {:.4}",
-        rate_healthy, rate_degraded, rate_healthy - rate_degraded
+        rate_healthy,
+        rate_degraded,
+        rate_healthy - rate_degraded
     );
 }
 
@@ -3455,8 +3517,7 @@ fn sim_s56_absolute_availability_signal_detects_symmetric_failure() {
 // Guards against false positives in §S55/§S56 symmetric failure detection.
 #[test]
 fn sim_s57_benign_global_latency_recovers_without_persistent_alarm() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
@@ -3529,8 +3590,7 @@ fn sim_s57_benign_global_latency_recovers_without_persistent_alarm() {
 #[test]
 fn sim_s58_selective_response_gaming_prevents_liveness_policy_promotion() {
     let make_pool = || {
-        let mut p = ProviderPool::new(SamplingStrategy::RandomK(1))
-            .with_active_window(4);
+        let mut p = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
         for i in 0..4u8 {
             p.add([i; 32], SubstrateLedger::new());
         }
@@ -3538,7 +3598,7 @@ fn sim_s58_selective_response_gaming_prevents_liveness_policy_promotion() {
     };
 
     let mut sim_honest = PoolSimulator::new(make_pool());
-    let mut sim_gamed  = PoolSimulator::new(make_pool());
+    let mut sim_gamed = PoolSimulator::new(make_pool());
 
     // 400 uniform selections in both pools.
     for _ in 0..100 {
@@ -3625,8 +3685,7 @@ fn sim_s58_selective_response_gaming_prevents_liveness_policy_promotion() {
 // The three surfaces have different values, proving they are orthogonal measurements.
 #[test]
 fn sim_s59_operational_telemetry_reports_three_distinct_surfaces() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
@@ -3679,13 +3738,15 @@ fn sim_s59_operational_telemetry_reports_three_distinct_surfaces() {
         tel.liveness_weighted_kappa - tel.kappa > 0.40,
         "§S59: liveness_weighted_κ must exceed κ by > 0.40 (surfaces are orthogonal); \
          lwk = {:.4}, κ = {:.4}",
-        tel.liveness_weighted_kappa, tel.kappa
+        tel.liveness_weighted_kappa,
+        tel.kappa
     );
     assert!(
         tel.liveness_weighted_kappa - rate > 0.20,
         "§S59: liveness_weighted_κ and availability rate must differ by > 0.20; \
          lwk = {:.4}, rate = {:.4}",
-        tel.liveness_weighted_kappa, rate
+        tel.liveness_weighted_kappa,
+        rate
     );
 }
 
@@ -3696,8 +3757,7 @@ fn sim_s59_operational_telemetry_reports_three_distinct_surfaces() {
 // Only the absolute availability surface reveals the degradation.
 #[test]
 fn sim_s60_symmetric_outage_reports_availability_loss_while_entropy_remains_healthy() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
@@ -3756,8 +3816,7 @@ fn sim_s60_symmetric_outage_reports_availability_loss_while_entropy_remains_heal
 #[test]
 fn sim_s61_zero_or_low_observation_window_is_unevaluable_not_healthy() {
     // Case A: completely fresh pool (0 samples, 0 responses).
-    let mut pool_a = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool_a = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool_a.add([i; 32], SubstrateLedger::new());
     }
@@ -3786,12 +3845,11 @@ fn sim_s61_zero_or_low_observation_window_is_unevaluable_not_healthy() {
     );
 
     // Case B: samples taken but zero responses recorded.
-    let mut pool_b = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool_b = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool_b.add([i; 32], SubstrateLedger::new());
     }
-    let mut rng = rand_core::OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0067);
     for _ in 0..20 {
         let _ = pool_b.sample(&mut rng);
     }
@@ -3829,11 +3887,17 @@ fn sim_s61_zero_or_low_observation_window_is_unevaluable_not_healthy() {
 // a rate based only on those fresh observations, not the pre-rotation history.
 #[test]
 fn sim_s62_absolute_availability_uses_bounded_fresh_observations() {
-    let mut rng = rand_core::OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0068);
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(2)
-        .with_exposure_reset()  // ExposureResetPolicy::OnRotation
-        .with_rotation(PoolRotationPolicy::Manual, ChurnBudget { min_churn: 1, max_churn: 1 });
+        .with_exposure_reset() // ExposureResetPolicy::OnRotation
+        .with_rotation(
+            PoolRotationPolicy::Manual,
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
+        );
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
@@ -3849,8 +3913,14 @@ fn sim_s62_absolute_availability_uses_bounded_fresh_observations() {
     }
 
     let tel_pre = pool.operational_telemetry();
-    assert_eq!(tel_pre.selection_total, 50, "§S62 pre-rotation: selection_total must be 50");
-    assert_eq!(tel_pre.response_total, 40, "§S62 pre-rotation: response_total must be 40");
+    assert_eq!(
+        tel_pre.selection_total, 50,
+        "§S62 pre-rotation: selection_total must be 50"
+    );
+    assert_eq!(
+        tel_pre.response_total, 40,
+        "§S62 pre-rotation: response_total must be 40"
+    );
     let rate_pre = tel_pre.recent_response_success_rate().unwrap();
     assert!(
         (rate_pre - 0.80).abs() < 0.01,
@@ -3911,11 +3981,17 @@ fn sim_s62_absolute_availability_uses_bounded_fresh_observations() {
 // Guards against a false interpretation that brief degradation persists indefinitely.
 #[test]
 fn sim_s63_benign_latency_recovery_clears_recent_availability_degradation() {
-    let mut rng = rand_core::OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0069);
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(2)
         .with_exposure_reset()
-        .with_rotation(PoolRotationPolicy::Manual, ChurnBudget { min_churn: 1, max_churn: 1 });
+        .with_rotation(
+            PoolRotationPolicy::Manual,
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
+        );
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
@@ -3993,17 +4069,16 @@ fn sim_s63_benign_latency_recovery_clears_recent_availability_degradation() {
 #[test]
 fn sim_s64_response_gaming_exposes_observation_integrity_limit() {
     let make_pool = || {
-        let mut p = ProviderPool::new(SamplingStrategy::RandomK(1))
-            .with_active_window(4);
+        let mut p = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
         for i in 0..4u8 {
             p.add([i; 32], SubstrateLedger::new());
         }
         p
     };
-    let mut rng = rand_core::OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0070);
 
     let mut pool_honest = make_pool();
-    let mut pool_gamed  = make_pool();
+    let mut pool_gamed = make_pool();
 
     // 100 selections in both pools.
     for _ in 0..100 {
@@ -4039,10 +4114,10 @@ fn sim_s64_response_gaming_exposes_observation_integrity_limit() {
     // total gamed responses: 6 + (23*4) = 6 + 92 = 98; close to 100
 
     let tel_honest = pool_honest.operational_telemetry();
-    let tel_gamed  = pool_gamed.operational_telemetry();
+    let tel_gamed = pool_gamed.operational_telemetry();
 
     let rate_honest = tel_honest.recent_response_success_rate().unwrap();
-    let rate_gamed  = tel_gamed.recent_response_success_rate().unwrap();
+    let rate_gamed = tel_gamed.recent_response_success_rate().unwrap();
 
     // Honest pool shows degradation.
     assert!(
@@ -4062,7 +4137,8 @@ fn sim_s64_response_gaming_exposes_observation_integrity_limit() {
         rate_gamed - rate_honest > 0.75,
         "§S64: gap between gamed and honest rate must exceed 0.75; \
          honest = {:.4}, gamed = {:.4}",
-        rate_honest, rate_gamed
+        rate_honest,
+        rate_gamed
     );
 }
 
@@ -4079,11 +4155,17 @@ fn sim_s65_telemetry_only_signals_do_not_trigger_eviction_or_rotation() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(2)
         // Manual is the default policy, stated explicitly for clarity.
-        .with_rotation(PoolRotationPolicy::Manual, ChurnBudget { min_churn: 1, max_churn: 1 });
+        .with_rotation(
+            PoolRotationPolicy::Manual,
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
+        );
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
-    let mut rng = rand_core::OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0071);
 
     // Enough samples for Steady phase so T4 gate does not block.
     for _ in 0..400 {
@@ -4116,7 +4198,8 @@ fn sim_s65_telemetry_only_signals_do_not_trigger_eviction_or_rotation() {
 
     // Total rotations = 0: telemetry-only signals did not drive any automatic policy action.
     assert_eq!(
-        pool.epoch_count(), 0,
+        pool.epoch_count(),
+        0,
         "§S65: telemetry-only degradation must not trigger rotation; epoch_count = {}",
         pool.epoch_count()
     );
@@ -4133,8 +4216,7 @@ fn sim_s65_telemetry_only_signals_do_not_trigger_eviction_or_rotation() {
 // There is no combined health_score field on OperationalTelemetrySnapshot.
 #[test]
 fn sim_s66_snapshot_classifies_surface_without_collapsing_to_one_score() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
@@ -4182,8 +4264,14 @@ fn sim_s66_snapshot_classifies_surface_without_collapsing_to_one_score() {
     );
 
     // Structural check: snapshot has three independently evaluable surfaces.
-    assert!(tel.availability_evaluable,     "§S66: availability surface must be evaluable");
-    assert!(tel.liveness_surface_evaluable, "§S66: liveness surface must be evaluable");
+    assert!(
+        tel.availability_evaluable,
+        "§S66: availability surface must be evaluable"
+    );
+    assert!(
+        tel.liveness_surface_evaluable,
+        "§S66: liveness surface must be evaluable"
+    );
 
     // The snapshot exposes raw values and evaluability flags — no composite health_score.
     // (Compile-time guarantee: OperationalTelemetrySnapshot has no health_score field.)
@@ -4195,8 +4283,7 @@ fn sim_s66_snapshot_classifies_surface_without_collapsing_to_one_score() {
 // be false, marking this kappa as absent-data artifact, not a T1 collapse signal.
 #[test]
 fn sim_s67_zero_observation_survivor_surface_is_unevaluable() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool.add([i; 32], SubstrateLedger::new());
     }
@@ -4216,7 +4303,8 @@ fn sim_s67_zero_observation_survivor_surface_is_unevaluable() {
         "§S67: fresh pool must report survivor surface as unevaluable (PostReset phase)"
     );
     assert_eq!(
-        tel.current_epoch_phase, EpochPhase::PostReset,
+        tel.current_epoch_phase,
+        EpochPhase::PostReset,
         "§S67: epoch phase must be PostReset when selection_total < active_n"
     );
 }
@@ -4229,8 +4317,7 @@ fn sim_s67_zero_observation_survivor_surface_is_unevaluable() {
 #[test]
 fn sim_s68_zero_observation_snapshot_cannot_be_read_as_t1_collapse() {
     // Pool A: zero observations — kappa = 1.0 but surface is unevaluable.
-    let mut pool_zero = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool_zero = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool_zero.add([i; 32], SubstrateLedger::new());
     }
@@ -4245,17 +4332,17 @@ fn sim_s68_zero_observation_snapshot_cannot_be_read_as_t1_collapse() {
         "§S68: zero-observation pool survivor surface must be unevaluable"
     );
     assert_eq!(
-        tel_zero.current_epoch_phase, EpochPhase::PostReset,
+        tel_zero.current_epoch_phase,
+        EpochPhase::PostReset,
         "§S68: zero-observation pool must be in PostReset phase"
     );
 
     // Pool B: 400 selections — Steady phase, survivor surface is evaluable.
-    let mut pool_steady = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool_steady = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4u8 {
         pool_steady.add([i; 32], SubstrateLedger::new());
     }
-    let mut rng = OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0068);
     for _ in 0..400 {
         let _ = pool_steady.sample(&mut rng);
     }
@@ -4266,7 +4353,8 @@ fn sim_s68_zero_observation_snapshot_cannot_be_read_as_t1_collapse() {
         "§S68: Steady-phase pool survivor surface must be evaluable"
     );
     assert_eq!(
-        tel_steady.current_epoch_phase, EpochPhase::Steady,
+        tel_steady.current_epoch_phase,
+        EpochPhase::Steady,
         "§S68: 400-sample pool must be in Steady phase (total_samples >= 4 * active_n)"
     );
 
@@ -4287,17 +4375,16 @@ fn sim_s68_zero_observation_snapshot_cannot_be_read_as_t1_collapse() {
 #[test]
 fn sim_s69_reported_response_ratio_is_documented_untrusted_under_injection() {
     let make_pool = || {
-        let mut p = ProviderPool::new(SamplingStrategy::RandomK(1))
-            .with_active_window(4);
+        let mut p = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
         for i in 0..4u8 {
             p.add([i; 32], SubstrateLedger::new());
         }
         p
     };
-    let mut rng = OsRng;
+    let mut rng = StdRng::seed_from_u64(0x5c0f_0069);
 
     let mut pool_honest = make_pool();
-    let mut pool_gamed  = make_pool();
+    let mut pool_gamed = make_pool();
 
     for _ in 0..100 {
         let _ = pool_honest.sample(&mut rng);
@@ -4330,10 +4417,10 @@ fn sim_s69_reported_response_ratio_is_documented_untrusted_under_injection() {
     }
 
     let tel_honest = pool_honest.operational_telemetry();
-    let tel_gamed  = pool_gamed.operational_telemetry();
+    let tel_gamed = pool_gamed.operational_telemetry();
 
     let ratio_honest = tel_honest.recent_reported_response_ratio().unwrap();
-    let ratio_gamed  = tel_gamed.recent_reported_response_ratio().unwrap();
+    let ratio_gamed = tel_gamed.recent_reported_response_ratio().unwrap();
 
     // Honest pool shows real low ratio.
     assert!(
@@ -4352,6 +4439,7 @@ fn sim_s69_reported_response_ratio_is_documented_untrusted_under_injection() {
         ratio_gamed - ratio_honest > 0.75,
         "§S69: gap between gamed and honest ratio must exceed 0.75; \
          honest = {:.4}, gamed = {:.4}",
-        ratio_honest, ratio_gamed
+        ratio_honest,
+        ratio_gamed
     );
 }

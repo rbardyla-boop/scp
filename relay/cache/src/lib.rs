@@ -26,13 +26,22 @@ pub struct WarmCache {
 
 impl WarmCache {
     pub fn new(ttl: Duration) -> Self {
-        Self { default_ttl: ttl, entries: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            default_ttl: ttl,
+            entries: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     /// Store a warm entry keyed by route ID. Overwrites any existing entry for the same route.
     pub fn retain(&self, route_id: &[u8; 16], session_key: &[u8; 32]) {
         let expires = Instant::now() + self.default_ttl;
-        self.entries.lock().unwrap().insert(*route_id, WarmEntry { key: *session_key, expires });
+        self.entries.lock().unwrap().insert(
+            *route_id,
+            WarmEntry {
+                key: *session_key,
+                expires,
+            },
+        );
     }
 
     /// Retrieve a cached session key if still warm. Lazy-evicts expired entries on access.

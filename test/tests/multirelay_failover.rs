@@ -45,8 +45,12 @@ fn workspace_bin(name: &str) -> PathBuf {
     p
 }
 
-fn relay_bin() -> PathBuf { workspace_bin("scp-relay") }
-fn cli_bin()   -> PathBuf { workspace_bin("scp-cli") }
+fn relay_bin() -> PathBuf {
+    workspace_bin("scp-relay")
+}
+fn cli_bin() -> PathBuf {
+    workspace_bin("scp-cli")
+}
 
 fn bins_exist() -> bool {
     relay_bin().exists() && cli_bin().exists()
@@ -69,7 +73,10 @@ fn cleanup(dir: &PathBuf) {
 
 async fn wait_for_relay(port: u16) {
     for _ in 0..50 {
-        if tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await.is_ok() {
+        if tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .is_ok()
+        {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -95,7 +102,9 @@ fn extract_json_field(json_line: &str, field: &str) -> Option<String> {
 fn extract_mailbox_id(output: &str) -> String {
     for line in output.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if let Some(id) = extract_json_field(line, "mailbox_id") {
             return id;
         }
@@ -104,7 +113,14 @@ fn extract_mailbox_id(output: &str) -> String {
 }
 
 fn contains_vocabulary_label(text: &str) -> bool {
-    let labels = ["Active", "Warm", "Dormant", "Suspended", "Severed", "Burned"];
+    let labels = [
+        "Active",
+        "Warm",
+        "Dormant",
+        "Suspended",
+        "Severed",
+        "Burned",
+    ];
     labels.iter().any(|&l| text.contains(l))
 }
 
@@ -126,21 +142,27 @@ async fn two_live_relays_replicate_store_and_dedup_on_receive() {
     let port_b = free_port();
 
     let mut relay_a = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_a}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_a spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_a}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_a spawn must succeed");
     let mut relay_b = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_b}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_b spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_b}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_b spawn must succeed");
     wait_for_relay(port_a).await;
     wait_for_relay(port_b).await;
     let addr_a = format!("127.0.0.1:{port_a}");
     let addr_b = format!("127.0.0.1:{port_b}");
 
     let alice_key = tmp.join("alice.key");
-    let bob_key   = tmp.join("bob.key");
-    let bob_card  = tmp.join("bob.card");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
 
     let (ok, _) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
     assert!(ok);
@@ -154,36 +176,62 @@ async fn two_live_relays_replicate_store_and_dedup_on_receive() {
 
     let (ok, send_out) = cli_run(&[
         "send",
-        "--identity", alice_key.to_str().unwrap(),
-        "--recipient", bob_card.to_str().unwrap(),
-        "--relay", &addr_a,
-        "--relay", &addr_b,
-        "--mailbox", &mailbox_id,
-        "--message", "multirelay happy path",
-    ]).await;
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &addr_a,
+        "--relay",
+        &addr_b,
+        "--mailbox",
+        &mailbox_id,
+        "--message",
+        "multirelay happy path",
+    ])
+    .await;
     assert!(ok, "send across two live relays must succeed\n{send_out}");
     assert_eq!(
-        count_occurrences(&send_out, "\"event\":\"burst_stored\""), 2,
+        count_occurrences(&send_out, "\"event\":\"burst_stored\""),
+        2,
         "R1 replicate-store must store the burst on BOTH live relays: {send_out}"
     );
     assert!(send_out.contains("\"event\":\"burst_replicated\""));
-    assert!(send_out.contains("\"count\":2"), "burst_replicated count must be 2: {send_out}");
+    assert!(
+        send_out.contains("\"count\":2"),
+        "burst_replicated count must be 2: {send_out}"
+    );
 
     let (ok, recv_out) = cli_run(&[
         "receive",
-        "--identity", bob_key.to_str().unwrap(),
-        "--relay", &addr_a,
-        "--relay", &addr_b,
-        "--mailbox", &mailbox_id,
-    ]).await;
-    assert!(ok, "receive across two live relays must succeed\n{recv_out}");
-    assert!(recv_out.contains("multirelay happy path"), "plaintext must match: {recv_out}");
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        &addr_a,
+        "--relay",
+        &addr_b,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
+    assert!(
+        ok,
+        "receive across two live relays must succeed\n{recv_out}"
+    );
+    assert!(
+        recv_out.contains("multirelay happy path"),
+        "plaintext must match: {recv_out}"
+    );
     assert_eq!(
-        count_occurrences(&recv_out, "\"event\":\"payload_decrypted\""), 1,
+        count_occurrences(&recv_out, "\"event\":\"payload_decrypted\""),
+        1,
         "poll-any + dedup-by-route_id must yield exactly ONE decrypted message, \
          not two, despite the burst being present on both relays: {recv_out}"
     );
-    assert!(recv_out.contains("\"count\":1"), "exchange_complete count must be the deduped 1: {recv_out}");
+    assert!(
+        recv_out.contains("\"count\":1"),
+        "exchange_complete count must be the deduped 1: {recv_out}"
+    );
 
     relay_a.kill().await.ok();
     relay_b.kill().await.ok();
@@ -204,21 +252,27 @@ async fn killing_one_of_two_relays_still_delivers_via_the_survivor() {
     let port_b = free_port();
 
     let mut relay_a = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_a}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_a spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_a}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_a spawn must succeed");
     let mut relay_b = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_b}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_b spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_b}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_b spawn must succeed");
     wait_for_relay(port_a).await;
     wait_for_relay(port_b).await;
     let addr_a = format!("127.0.0.1:{port_a}");
     let addr_b = format!("127.0.0.1:{port_b}");
 
     let alice_key = tmp.join("alice.key");
-    let bob_key   = tmp.join("bob.key");
-    let bob_card  = tmp.join("bob.card");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
     let (_, _) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
     let (_, bob_out) = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
     std::fs::write(&bob_card, &bob_out).unwrap();
@@ -229,35 +283,62 @@ async fn killing_one_of_two_relays_still_delivers_via_the_survivor() {
     relay_b.kill().await.ok();
     // Give the OS a moment to actually tear down the listening socket.
     for _ in 0..50 {
-        if tokio::net::TcpStream::connect(&addr_b).await.is_err() { break; }
+        if tokio::net::TcpStream::connect(&addr_b).await.is_err() {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     let (ok, send_out) = cli_run(&[
         "send",
-        "--identity", alice_key.to_str().unwrap(),
-        "--recipient", bob_card.to_str().unwrap(),
-        "--relay", &addr_a,
-        "--relay", &addr_b,
-        "--mailbox", &mailbox_id,
-        "--message", "survives one dead relay",
-    ]).await;
-    assert!(ok, "send must still succeed via the surviving relay (partial success = success)\n{send_out}");
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &addr_a,
+        "--relay",
+        &addr_b,
+        "--mailbox",
+        &mailbox_id,
+        "--message",
+        "survives one dead relay",
+    ])
+    .await;
+    assert!(
+        ok,
+        "send must still succeed via the surviving relay (partial success = success)\n{send_out}"
+    );
     assert_eq!(
-        count_occurrences(&send_out, "\"event\":\"burst_stored\""), 1,
+        count_occurrences(&send_out, "\"event\":\"burst_stored\""),
+        1,
         "only the ONE live relay should confirm storage: {send_out}"
     );
-    assert!(send_out.contains("\"count\":1"), "burst_replicated count must reflect only the survivor: {send_out}");
+    assert!(
+        send_out.contains("\"count\":1"),
+        "burst_replicated count must reflect only the survivor: {send_out}"
+    );
 
     let (ok, recv_out) = cli_run(&[
         "receive",
-        "--identity", bob_key.to_str().unwrap(),
-        "--relay", &addr_a,
-        "--relay", &addr_b,
-        "--mailbox", &mailbox_id,
-    ]).await;
-    assert!(ok, "receive must still succeed via the surviving relay\n{recv_out}");
-    assert!(recv_out.contains("survives one dead relay"), "plaintext must match: {recv_out}");
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        &addr_a,
+        "--relay",
+        &addr_b,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
+    assert!(
+        ok,
+        "receive must still succeed via the surviving relay\n{recv_out}"
+    );
+    assert!(
+        recv_out.contains("survives one dead relay"),
+        "plaintext must match: {recv_out}"
+    );
     assert!(recv_out.contains("\"count\":1"));
 
     relay_a.kill().await.ok();
@@ -277,40 +358,67 @@ async fn multirelay_flow_produces_no_vocabulary_labels() {
     let port_a = free_port();
     let port_b = free_port();
     let mut relay_a = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_a}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_a spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_a}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_a spawn must succeed");
     let mut relay_b = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_b}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_b spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_b}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_b spawn must succeed");
     wait_for_relay(port_a).await;
     wait_for_relay(port_b).await;
     let addr_a = format!("127.0.0.1:{port_a}");
     let addr_b = format!("127.0.0.1:{port_b}");
 
     let alice_key = tmp.join("alice.key");
-    let bob_key   = tmp.join("bob.key");
-    let bob_card  = tmp.join("bob.card");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
     let (_, alice_out) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
-    let (_, bob_out)   = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
+    let (_, bob_out) = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
     std::fs::write(&bob_card, &bob_out).unwrap();
     let (_, mb_out) = cli_run(&["mailbox-new"]).await;
-    let mailbox_id  = extract_mailbox_id(&mb_out);
+    let mailbox_id = extract_mailbox_id(&mb_out);
 
     let (_, send_out) = cli_run(&[
-        "send", "--identity", alice_key.to_str().unwrap(),
-        "--recipient", bob_card.to_str().unwrap(),
-        "--relay", &addr_a, "--relay", &addr_b,
-        "--mailbox", &mailbox_id, "--message", "vocab check",
-    ]).await;
+        "send",
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &addr_a,
+        "--relay",
+        &addr_b,
+        "--mailbox",
+        &mailbox_id,
+        "--message",
+        "vocab check",
+    ])
+    .await;
     let (_, recv_out) = cli_run(&[
-        "receive", "--identity", bob_key.to_str().unwrap(),
-        "--relay", &addr_a, "--relay", &addr_b, "--mailbox", &mailbox_id,
-    ]).await;
+        "receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        &addr_a,
+        "--relay",
+        &addr_b,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
 
     let all = format!("{alice_out}{bob_out}{mb_out}{send_out}{recv_out}");
-    assert!(!contains_vocabulary_label(&all), "no vocabulary labels allowed: {all}");
+    assert!(
+        !contains_vocabulary_label(&all),
+        "no vocabulary labels allowed: {all}"
+    );
 
     relay_a.kill().await.ok();
     relay_b.kill().await.ok();
@@ -375,13 +483,13 @@ async fn live_mesh_two_relay_failover() {
         return;
     }
 
-    const WOWSERVER_ADDR:    &str = "100.72.12.57:7700";
+    const WOWSERVER_ADDR: &str = "100.72.12.57:7700";
     const RYAN_DESKTOP_ADDR: &str = "100.101.76.81:7700";
 
     let tmp = test_tmp_dir("live-mesh");
     let alice_key = tmp.join("alice.key");
-    let bob_key   = tmp.join("bob.key");
-    let bob_card  = tmp.join("bob.card");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
     let (ok, _) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
     assert!(ok);
     let (ok, bob_out) = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
@@ -393,13 +501,24 @@ async fn live_mesh_two_relay_failover() {
 
     // Ensure both real relays are up before starting (either may already be
     // running from a prior manual trial).
-    if tokio::net::TcpStream::connect(WOWSERVER_ADDR).await.is_err() {
+    if tokio::net::TcpStream::connect(WOWSERVER_ADDR)
+        .await
+        .is_err()
+    {
         panic!("wowserver relay is not reachable — start it before running this test");
     }
-    if tokio::net::TcpStream::connect(RYAN_DESKTOP_ADDR).await.is_err() {
+    if tokio::net::TcpStream::connect(RYAN_DESKTOP_ADDR)
+        .await
+        .is_err()
+    {
         ssh_restart_relay_on_ryan_desktop().await;
         for _ in 0..50 {
-            if tokio::net::TcpStream::connect(RYAN_DESKTOP_ADDR).await.is_ok() { break; }
+            if tokio::net::TcpStream::connect(RYAN_DESKTOP_ADDR)
+                .await
+                .is_ok()
+            {
+                break;
+            }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
@@ -407,40 +526,74 @@ async fn live_mesh_two_relay_failover() {
     // Real send across both live mesh relays.
     let (ok, send_out) = cli_run(&[
         "send",
-        "--identity", alice_key.to_str().unwrap(),
-        "--recipient", bob_card.to_str().unwrap(),
-        "--relay", WOWSERVER_ADDR,
-        "--relay", RYAN_DESKTOP_ADDR,
-        "--mailbox", &mailbox_id,
-        "--message", "live mesh multirelay",
-    ]).await;
-    assert!(ok, "send across both live mesh relays must succeed\n{send_out}");
-    assert_eq!(count_occurrences(&send_out, "\"event\":\"burst_stored\""), 2,
-        "both live mesh relays must confirm storage: {send_out}");
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        WOWSERVER_ADDR,
+        "--relay",
+        RYAN_DESKTOP_ADDR,
+        "--mailbox",
+        &mailbox_id,
+        "--message",
+        "live mesh multirelay",
+    ])
+    .await;
+    assert!(
+        ok,
+        "send across both live mesh relays must succeed\n{send_out}"
+    );
+    assert_eq!(
+        count_occurrences(&send_out, "\"event\":\"burst_stored\""),
+        2,
+        "both live mesh relays must confirm storage: {send_out}"
+    );
 
     // Kill the real ryan-desktop relay over SSH — an actual remote process.
     ssh_kill_relay_on_ryan_desktop().await;
     for _ in 0..50 {
-        if tokio::net::TcpStream::connect(RYAN_DESKTOP_ADDR).await.is_err() { break; }
+        if tokio::net::TcpStream::connect(RYAN_DESKTOP_ADDR)
+            .await
+            .is_err()
+        {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     // Real receive: must still succeed via the surviving wowserver relay.
     let (ok, recv_out) = cli_run(&[
         "receive",
-        "--identity", bob_key.to_str().unwrap(),
-        "--relay", WOWSERVER_ADDR,
-        "--relay", RYAN_DESKTOP_ADDR,
-        "--mailbox", &mailbox_id,
-    ]).await;
-    assert!(ok, "receive must still succeed via the surviving live relay\n{recv_out}");
-    assert!(recv_out.contains("live mesh multirelay"), "plaintext must match: {recv_out}");
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        WOWSERVER_ADDR,
+        "--relay",
+        RYAN_DESKTOP_ADDR,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
+    assert!(
+        ok,
+        "receive must still succeed via the surviving live relay\n{recv_out}"
+    );
+    assert!(
+        recv_out.contains("live mesh multirelay"),
+        "plaintext must match: {recv_out}"
+    );
     assert!(recv_out.contains("\"count\":1"));
 
     // Restore ryan-desktop's relay, leaving the mesh as found.
     ssh_restart_relay_on_ryan_desktop().await;
     for _ in 0..50 {
-        if tokio::net::TcpStream::connect(RYAN_DESKTOP_ADDR).await.is_ok() { break; }
+        if tokio::net::TcpStream::connect(RYAN_DESKTOP_ADDR)
+            .await
+            .is_ok()
+        {
+            break;
+        }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 

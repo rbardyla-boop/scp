@@ -5,9 +5,12 @@
 //   ReplayWindow bitmap arithmetic, framing roundtrip identity,
 //   and state commitment sensitivity.
 
-use proptest::prelude::*;
 use proptest::collection::vec as prop_vec;
-use scp_transport::{flash::{PublishedHandshakeKey, RecipientState}, ReplayWindow};
+use proptest::prelude::*;
+use scp_transport::{
+    flash::{PublishedHandshakeKey, RecipientState},
+    ReplayWindow,
+};
 use scp_vitality::VitalityState;
 use scp_wire_format::{
     framing::{decode_noise_length, decode_tcp_length, encode_noise_frame, encode_tcp_frame},

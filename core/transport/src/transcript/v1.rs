@@ -17,11 +17,11 @@ use scp_wire_format::transcript::transcript_v1_bytes;
 /// This format is protocol-stable. Use FlashTranscriptV2 for sessions that
 /// include bilateral X25519 DH (format byte 0x02).
 pub struct FlashTranscript {
-    pub route_id:          RouteId,
-    pub nonce:             FreshnessNonce,
+    pub route_id: RouteId,
+    pub nonce: FreshnessNonce,
     pub recipient_ops_pub: [u8; 32],
     pub vitality_snapshot: VitalityState,
-    pub protocol_version:  u8,
+    pub protocol_version: u8,
 }
 
 impl FlashTranscript {
@@ -32,12 +32,12 @@ impl FlashTranscript {
     /// preserved across all future refactors.
     pub fn hash(&self) -> [u8; 32] {
         let vitality_byte: u8 = match &self.vitality_snapshot {
-            VitalityState::Active    => 0,
-            VitalityState::Warm      => 1,
-            VitalityState::Dormant   => 2,
+            VitalityState::Active => 0,
+            VitalityState::Warm => 1,
+            VitalityState::Dormant => 2,
             VitalityState::Suspended => 3,
-            VitalityState::Severed   => 4,
-            VitalityState::Burned    => 5,
+            VitalityState::Severed => 4,
+            VitalityState::Burned => 5,
         };
 
         let data = transcript_v1_bytes(

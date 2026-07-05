@@ -94,11 +94,11 @@ use rand_core::OsRng;
 use scp_cryptography::keys::{x25519_generate_keypair, KeyPair};
 use scp_ledger_substrate::{HandshakeEphemeral, LedgerIdentityRecord, SubstrateLedger};
 use scp_provider_pool::{
-    ActivationStrategy, AdmissionConfig, AdmissionError, ChurnBudget, DeferralReason,
-    EpochPhase, ExposureEstimate, ExposureResetPolicy, EvictionConfig, EvictionError,
-    EvictionReason, PoolRotationPolicy, ProviderPool, ProviderReputation, RotationOutcome,
-    SamplingStrategy, SemanticClassId,
-    admission_challenge_message, epoch_similarity, exposure_divergence, DUMMY_QUERY_PROBABILITY,
+    admission_challenge_message, epoch_similarity, exposure_divergence, ActivationStrategy,
+    AdmissionConfig, AdmissionError, ChurnBudget, DeferralReason, EpochPhase, EvictionConfig,
+    EvictionError, EvictionReason, ExposureEstimate, ExposureResetPolicy, PoolRotationPolicy,
+    ProviderPool, ProviderReputation, RotationOutcome, SamplingStrategy, SemanticClassId,
+    DUMMY_QUERY_PROBABILITY,
 };
 use scp_transport::flash::FlashSession;
 use scp_transport::quorum::{EquivocationEvidence, QuorumResult};
@@ -108,29 +108,33 @@ use scp_wire_format::signing::{handshake_sig_message, registration_message};
 
 fn register(ledger: &SubstrateLedger) -> (KeyPair, KeyPair) {
     let root_kp = KeyPair::generate();
-    let ops_kp  = KeyPair::generate();
+    let ops_kp = KeyPair::generate();
     let record = LedgerIdentityRecord {
-        k_root_pub:            root_kp.public,
-        k_ops_pub:             ops_kp.public,
-        recovery_policy_hash:  [0u8; 32],
+        k_root_pub: root_kp.public,
+        k_ops_pub: ops_kp.public,
+        recovery_policy_hash: [0u8; 32],
         continuity_commitment: [0u8; 32],
     };
     let msg = registration_message(&root_kp.public, &ops_kp.public, &[0u8; 32]);
     let sig = root_kp.sign(&msg);
-    ledger.register_identity(&record, &sig).expect("register_identity must succeed");
+    ledger
+        .register_identity(&record, &sig)
+        .expect("register_identity must succeed");
     (root_kp, ops_kp)
 }
 
 fn register_same_identity(ledger: &SubstrateLedger, root_kp: &KeyPair, ops_kp: &KeyPair) {
     let record = LedgerIdentityRecord {
-        k_root_pub:            root_kp.public,
-        k_ops_pub:             ops_kp.public,
-        recovery_policy_hash:  [0u8; 32],
+        k_root_pub: root_kp.public,
+        k_ops_pub: ops_kp.public,
+        recovery_policy_hash: [0u8; 32],
         continuity_commitment: [0u8; 32],
     };
     let msg = registration_message(&root_kp.public, &ops_kp.public, &[0u8; 32]);
     let sig = root_kp.sign(&msg);
-    ledger.register_identity(&record, &sig).expect("register_identity must succeed");
+    ledger
+        .register_identity(&record, &sig)
+        .expect("register_identity must succeed");
 }
 
 fn publish_ephemeral_explicit(
@@ -161,17 +165,17 @@ fn publish_ephemeral(ledger: &SubstrateLedger, ops_kp: &KeyPair, expires_at: u64
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 fn pid(byte: u8) -> [u8; 32] {
     [byte; 32]
 }
 
-fn make_ledger_with_identity(
-    root_kp: &KeyPair,
-    ops_kp: &KeyPair,
-) -> SubstrateLedger {
+fn make_ledger_with_identity(root_kp: &KeyPair, ops_kp: &KeyPair) -> SubstrateLedger {
     let ledger = SubstrateLedger::new();
     register_same_identity(&ledger, root_kp, ops_kp);
     ledger
@@ -183,7 +187,10 @@ fn make_ledger_with_identity(
 fn pool_empty_sample_returns_empty_quorum() {
     let pool: ProviderPool<SubstrateLedger> = ProviderPool::new(SamplingStrategy::RandomK(3));
     let quorum = pool.sample(&mut OsRng);
-    assert!(quorum.is_empty(), "sampling from empty pool must return empty quorum");
+    assert!(
+        quorum.is_empty(),
+        "sampling from empty pool must return empty quorum"
+    );
 }
 
 #[test]
@@ -194,8 +201,11 @@ fn pool_sample_k_returns_k_providers() {
         pool.add(pid(i), ledger);
     }
     let quorum = pool.sample(&mut OsRng);
-    assert_eq!(quorum.len(), 3,
-        "RandomK(3) from a pool of 5 must return exactly 3 providers");
+    assert_eq!(
+        quorum.len(),
+        3,
+        "RandomK(3) from a pool of 5 must return exactly 3 providers"
+    );
 }
 
 #[test]
@@ -205,8 +215,11 @@ fn pool_sample_k_geq_n_returns_all_providers() {
         pool.add(pid(i), SubstrateLedger::new());
     }
     let quorum = pool.sample(&mut OsRng);
-    assert_eq!(quorum.len(), 3,
-        "RandomK(10) from a pool of 3 must return all 3 providers");
+    assert_eq!(
+        quorum.len(),
+        3,
+        "RandomK(10) from a pool of 3 must return all 3 providers"
+    );
 }
 
 // ── §2. Pool does not consume providers ───────────────────────────────────────
@@ -219,9 +232,17 @@ fn pool_sample_is_repeatable_from_same_pool() {
     }
     assert_eq!(pool.len(), 4, "pool must retain all 4 providers");
     let _q1 = pool.sample(&mut OsRng);
-    assert_eq!(pool.len(), 4, "pool must retain all 4 providers after first sample");
+    assert_eq!(
+        pool.len(),
+        4,
+        "pool must retain all 4 providers after first sample"
+    );
     let _q2 = pool.sample(&mut OsRng);
-    assert_eq!(pool.len(), 4, "pool must retain all 4 providers after second sample");
+    assert_eq!(
+        pool.len(),
+        4,
+        "pool must retain all 4 providers after second sample"
+    );
 }
 
 #[test]
@@ -234,7 +255,11 @@ fn pool_providers_are_not_consumed_by_sample() {
         let q = pool.sample(&mut OsRng);
         assert_eq!(q.len(), 2, "each sample must return 2 providers");
     }
-    assert_eq!(pool.len(), 3, "pool size must be unchanged after 10 samples");
+    assert_eq!(
+        pool.len(),
+        3,
+        "pool size must be unchanged after 10 samples"
+    );
 }
 
 // ── §3. Sampled quorum is a valid StateProvider ───────────────────────────────
@@ -257,8 +282,10 @@ async fn pool_sampled_quorum_works_as_state_provider() {
         .expect("sampled quorum must be a valid StateProvider for retrieve_state");
 
     assert_eq!(state.ops_pub, ops_kp.public);
-    assert!(state.handshake_ephemeral.is_some(),
-        "quorum must surface the published ephemeral");
+    assert!(
+        state.handshake_ephemeral.is_some(),
+        "quorum must surface the published ephemeral"
+    );
 }
 
 // ── §4. Sampling produces non-trivial randomness ──────────────────────────────
@@ -299,8 +326,10 @@ fn pool_different_rng_states_produce_different_quorums() {
         }
     }
 
-    assert!(seen_commitments.len() >= 2,
-        "100 OsRng samples from 5 providers must produce at least 2 distinct quorum compositions");
+    assert!(
+        seen_commitments.len() >= 2,
+        "100 OsRng samples from 5 providers must produce at least 2 distinct quorum compositions"
+    );
 }
 
 // ── §5. Reputation: new is zero ───────────────────────────────────────────────
@@ -311,7 +340,10 @@ fn reputation_new_is_zero() {
     let id = pid(0xAA);
     assert_eq!(rep.equivocation_count(&id, &SemanticClassId::Monotonic), 0);
     assert_eq!(rep.equivocation_count(&id, &SemanticClassId::SoftState), 0);
-    assert_eq!(rep.equivocation_count(&id, &SemanticClassId::ConsensusRelevant), 0);
+    assert_eq!(
+        rep.equivocation_count(&id, &SemanticClassId::ConsensusRelevant),
+        0
+    );
 }
 
 // ── §6. Reputation records both providers from evidence ───────────────────────
@@ -336,11 +368,13 @@ fn reputation_records_equivocation_for_both_providers() {
     rep.record_equivocation(&evidence);
 
     assert_eq!(
-        rep.equivocation_count(&id_a, &SemanticClassId::ConsensusRelevant), 1,
+        rep.equivocation_count(&id_a, &SemanticClassId::ConsensusRelevant),
+        1,
         "provider_a must receive a ConsensusRelevant equivocation count of 1"
     );
     assert_eq!(
-        rep.equivocation_count(&id_b, &SemanticClassId::ConsensusRelevant), 1,
+        rep.equivocation_count(&id_b, &SemanticClassId::ConsensusRelevant),
+        1,
         "provider_b must receive a ConsensusRelevant equivocation count of 1"
     );
 }
@@ -366,7 +400,8 @@ fn reputation_equivocation_count_accumulates() {
     rep.record_equivocation(&evidence);
 
     assert_eq!(
-        rep.equivocation_count(&id_a, &SemanticClassId::ConsensusRelevant), 2,
+        rep.equivocation_count(&id_a, &SemanticClassId::ConsensusRelevant),
+        2,
         "two record_equivocation calls must accumulate to count 2"
     );
 }
@@ -394,15 +429,18 @@ fn reputation_class_isolation() {
     rep.record_equivocation(&evidence);
 
     assert_eq!(
-        rep.equivocation_count(&id, &SemanticClassId::ConsensusRelevant), 1,
+        rep.equivocation_count(&id, &SemanticClassId::ConsensusRelevant),
+        1,
         "ConsensusRelevant count must be 1"
     );
     assert_eq!(
-        rep.equivocation_count(&id, &SemanticClassId::Monotonic), 0,
+        rep.equivocation_count(&id, &SemanticClassId::Monotonic),
+        0,
         "ConsensusRelevant equivocation must not affect Monotonic count"
     );
     assert_eq!(
-        rep.equivocation_count(&id, &SemanticClassId::SoftState), 0,
+        rep.equivocation_count(&id, &SemanticClassId::SoftState),
+        0,
         "ConsensusRelevant equivocation must not affect SoftState count"
     );
 }
@@ -444,11 +482,13 @@ fn pool_to_quorum_to_reputation_integration() {
     rep.record_equivocation(&evidence);
 
     assert_eq!(
-        rep.equivocation_count(&id_a, &SemanticClassId::ConsensusRelevant), 1,
+        rep.equivocation_count(&id_a, &SemanticClassId::ConsensusRelevant),
+        1,
         "provider A must have ConsensusRelevant equivocation count 1 after integration"
     );
     assert_eq!(
-        rep.equivocation_count(&id_b, &SemanticClassId::ConsensusRelevant), 1,
+        rep.equivocation_count(&id_b, &SemanticClassId::ConsensusRelevant),
+        1,
         "provider B must have ConsensusRelevant equivocation count 1 after integration"
     );
 }
@@ -469,11 +509,19 @@ fn pool_lemire_indices_in_range() {
 
     for _ in 0..1000 {
         let q = pool.sample(&mut OsRng);
-        assert_eq!(q.len(), 1, "RandomK(1) must always return exactly 1 provider");
+        assert_eq!(
+            q.len(),
+            1,
+            "RandomK(1) must always return exactly 1 provider"
+        );
         // Can't directly inspect which provider was selected via public API,
         // but the quorum must be non-empty and pool must remain intact.
     }
-    assert_eq!(pool.len(), 3, "pool must remain unchanged after 1000 Lemire samples");
+    assert_eq!(
+        pool.len(),
+        3,
+        "pool must remain unchanged after 1000 Lemire samples"
+    );
     // Reachability of all 3 providers: over 1000 draws, P(any provider never selected)
     // = (2/3)^1000 ≈ 0. The non-empty quorum invariant above is the structural check.
 }
@@ -491,8 +539,11 @@ fn pool_weighted_selects_correct_count() {
         pool.add(pid(i), SubstrateLedger::new());
     }
     let quorum = pool.sample(&mut OsRng);
-    assert_eq!(quorum.len(), 3,
-        "WeightedByReputation(k=3) from pool of 5 must return exactly 3 providers");
+    assert_eq!(
+        quorum.len(),
+        3,
+        "WeightedByReputation(k=3) from pool of 5 must return exactly 3 providers"
+    );
 }
 
 // ── §12. High-equivocation provider is selected less often ───────────────────
@@ -543,8 +594,10 @@ fn pool_weighted_high_equivocation_reduces_selection() {
         assert_eq!(q.len(), 1, "each sample must yield exactly 1 provider");
         count += 1;
     }
-    assert_eq!(count, 1000,
-        "weighted sampling must always produce a quorum when pool is non-empty");
+    assert_eq!(
+        count, 1000,
+        "weighted sampling must always produce a quorum when pool is non-empty"
+    );
 }
 
 // ── §13. Floor parameter prevents provider starvation ─────────────────────────
@@ -570,7 +623,7 @@ fn pool_weighted_floor_preserves_minimum_selection() {
     register_same_identity(&ledger_b, &root_kp, &ops_kp);
 
     publish_ephemeral(&ledger_a, &ops_kp, now + 100);
-    publish_ephemeral(&ledger_b, &ops_kp, now + 200);  // different expires_at → different commitment
+    publish_ephemeral(&ledger_b, &ops_kp, now + 200); // different expires_at → different commitment
 
     let mut pool = ProviderPool::new(SamplingStrategy::WeightedByReputation {
         k: 1,
@@ -599,8 +652,10 @@ fn pool_weighted_floor_preserves_minimum_selection() {
         }
     }
 
-    assert!(seen_commitments.len() >= 2,
-        "floor=0.5 must preserve B's selection probability; both commitments must appear");
+    assert!(
+        seen_commitments.len() >= 2,
+        "floor=0.5 must preserve B's selection probability; both commitments must appear"
+    );
 }
 
 // ── §14. WeightedByReputation with zero equivocations is statistically uniform ─
@@ -640,11 +695,16 @@ fn pool_weighted_zero_equivocations_is_uniform() {
         }
     }
 
-    assert_eq!(commitment_counts.len(), 3,
-        "all 3 providers must be selected at least once over 3000 draws");
-    for (_, &count) in &commitment_counts {
-        assert!(count >= 800 && count <= 1200,
-            "uniform WeightedByReputation must select each provider ~33%; got {count}");
+    assert_eq!(
+        commitment_counts.len(),
+        3,
+        "all 3 providers must be selected at least once over 3000 draws"
+    );
+    for &count in commitment_counts.values() {
+        assert!(
+            (800..=1200).contains(&count),
+            "uniform WeightedByReputation must select each provider ~33%; got {count}"
+        );
     }
 }
 
@@ -679,15 +739,20 @@ fn pool_maybe_dummy_query_does_not_panic() {
 
 #[test]
 fn pool_rotation_add_fills_active_then_dormant() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(2))
-        .with_active_window(3);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(2)).with_active_window(3);
     for i in 0u8..5 {
         pool.add(pid(i), SubstrateLedger::new());
     }
-    assert_eq!(pool.active_len(), 3,
-        "active window of 3 must hold exactly 3 providers");
-    assert_eq!(pool.len(), 5,
-        "universe (active + dormant) must be all 5 providers");
+    assert_eq!(
+        pool.active_len(),
+        3,
+        "active window of 3 must hold exactly 3 providers"
+    );
+    assert_eq!(
+        pool.len(),
+        5,
+        "universe (active + dormant) must be all 5 providers"
+    );
 }
 
 // ── §17. QueryCount policy triggers rotation at the right count ───────────────
@@ -712,7 +777,10 @@ fn pool_rotation_query_count_triggers_rotation() {
         .with_active_window(2)
         .with_rotation(
             PoolRotationPolicy::QueryCount(3),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
 
     for i in 0u8..4 {
@@ -725,10 +793,10 @@ fn pool_rotation_query_count_triggers_rotation() {
     let initial = {
         let q = pool.sample(&mut OsRng);
         match q.get_commitment_quorum(&ops_kp.public) {
-            QuorumResult::Equivocation(e) =>
-                std::collections::HashSet::from([e.commitment_a, e.commitment_b]),
-            QuorumResult::Agree(c) =>
-                std::collections::HashSet::from([c, c]),
+            QuorumResult::Equivocation(e) => {
+                std::collections::HashSet::from([e.commitment_a, e.commitment_b])
+            }
+            QuorumResult::Agree(c) => std::collections::HashSet::from([c, c]),
             QuorumResult::Unavailable => panic!("active providers must be reachable"),
         }
     };
@@ -741,21 +809,29 @@ fn pool_rotation_query_count_triggers_rotation() {
     for _ in 0..3 {
         pool.maybe_rotate(&mut OsRng);
     }
-    assert_eq!(pool.active_len(), 2, "rotation must not change active set size");
+    assert_eq!(
+        pool.active_len(),
+        2,
+        "rotation must not change active set size"
+    );
 
     let post = {
         let q = pool.sample(&mut OsRng);
         match q.get_commitment_quorum(&ops_kp.public) {
-            QuorumResult::Equivocation(e) =>
-                std::collections::HashSet::from([e.commitment_a, e.commitment_b]),
-            QuorumResult::Agree(c) =>
-                std::collections::HashSet::from([c, c]),
-            QuorumResult::Unavailable => panic!("active providers must be reachable after rotation"),
+            QuorumResult::Equivocation(e) => {
+                std::collections::HashSet::from([e.commitment_a, e.commitment_b])
+            }
+            QuorumResult::Agree(c) => std::collections::HashSet::from([c, c]),
+            QuorumResult::Unavailable => {
+                panic!("active providers must be reachable after rotation")
+            }
         }
     };
 
-    assert_ne!(initial, post,
-        "QueryCount(3) rotation must change the active commitment set");
+    assert_ne!(
+        initial, post,
+        "QueryCount(3) rotation must change the active commitment set"
+    );
 }
 
 // ── §18. Manual policy never auto-rotates ────────────────────────────────────
@@ -772,7 +848,10 @@ fn pool_rotation_manual_policy_never_auto_rotates() {
         .with_active_window(2)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
 
     for i in 0u8..4 {
@@ -784,10 +863,10 @@ fn pool_rotation_manual_policy_never_auto_rotates() {
     let initial = {
         let q = pool.sample(&mut OsRng);
         match q.get_commitment_quorum(&ops_kp.public) {
-            QuorumResult::Equivocation(e) =>
-                std::collections::HashSet::from([e.commitment_a, e.commitment_b]),
-            QuorumResult::Agree(c) =>
-                std::collections::HashSet::from([c, c]),
+            QuorumResult::Equivocation(e) => {
+                std::collections::HashSet::from([e.commitment_a, e.commitment_b])
+            }
+            QuorumResult::Agree(c) => std::collections::HashSet::from([c, c]),
             QuorumResult::Unavailable => panic!("providers must be reachable"),
         }
     };
@@ -799,16 +878,18 @@ fn pool_rotation_manual_policy_never_auto_rotates() {
     let post = {
         let q = pool.sample(&mut OsRng);
         match q.get_commitment_quorum(&ops_kp.public) {
-            QuorumResult::Equivocation(e) =>
-                std::collections::HashSet::from([e.commitment_a, e.commitment_b]),
-            QuorumResult::Agree(c) =>
-                std::collections::HashSet::from([c, c]),
+            QuorumResult::Equivocation(e) => {
+                std::collections::HashSet::from([e.commitment_a, e.commitment_b])
+            }
+            QuorumResult::Agree(c) => std::collections::HashSet::from([c, c]),
             QuorumResult::Unavailable => panic!("providers must be reachable"),
         }
     };
 
-    assert_eq!(initial, post,
-        "Manual policy must not auto-rotate; commitment set must be stable");
+    assert_eq!(
+        initial, post,
+        "Manual policy must not auto-rotate; commitment set must be stable"
+    );
 }
 
 // ── §19. ChurnBudget min=max=1 swaps exactly one provider per rotation ────────
@@ -830,7 +911,10 @@ fn pool_rotation_churn_budget_swaps_exactly_one() {
         .with_active_window(2)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
 
     for i in 0u8..4 {
@@ -842,10 +926,10 @@ fn pool_rotation_churn_budget_swaps_exactly_one() {
     let commitment_set = |pool: &ProviderPool<SubstrateLedger>| {
         let q = pool.sample(&mut OsRng.clone());
         match q.get_commitment_quorum(&ops_kp.public) {
-            QuorumResult::Equivocation(e) =>
-                std::collections::HashSet::from([e.commitment_a, e.commitment_b]),
-            QuorumResult::Agree(c) =>
-                std::collections::HashSet::from([c, c]),
+            QuorumResult::Equivocation(e) => {
+                std::collections::HashSet::from([e.commitment_a, e.commitment_b])
+            }
+            QuorumResult::Agree(c) => std::collections::HashSet::from([c, c]),
             QuorumResult::Unavailable => panic!("providers must be reachable"),
         }
     };
@@ -855,10 +939,16 @@ fn pool_rotation_churn_budget_swaps_exactly_one() {
         pool.force_rotate(&mut OsRng);
         let cur = commitment_set(&pool);
         let intersection: std::collections::HashSet<_> = prev.intersection(&cur).collect();
-        assert_eq!(intersection.len(), 1,
-            "churn=1 must leave exactly 1 provider unchanged across each rotation");
-        assert_eq!(pool.active_len(), 2,
-            "active set size must be invariant under rotation");
+        assert_eq!(
+            intersection.len(),
+            1,
+            "churn=1 must leave exactly 1 provider unchanged across each rotation"
+        );
+        assert_eq!(
+            pool.active_len(),
+            2,
+            "active set size must be invariant under rotation"
+        );
         prev = cur;
     }
 }
@@ -871,10 +961,16 @@ fn pool_rotation_universe_all_active_by_default() {
     for i in 0u8..5 {
         pool.add(pid(i), SubstrateLedger::new());
     }
-    assert_eq!(pool.active_len(), 5,
-        "without with_active_window, all providers must be active");
-    assert_eq!(pool.len(), 5,
-        "len() must equal active_len() when no window is set");
+    assert_eq!(
+        pool.active_len(),
+        5,
+        "without with_active_window, all providers must be active"
+    );
+    assert_eq!(
+        pool.len(),
+        5,
+        "len() must equal active_len() when no window is set"
+    );
 }
 
 // ── §21. All universe providers eventually appear in the active set ────────────
@@ -898,7 +994,10 @@ fn pool_rotation_active_set_covers_universe_over_time() {
         .with_active_window(3)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 2 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 2,
+            },
         );
 
     for i in 0u8..6 {
@@ -916,15 +1015,20 @@ fn pool_rotation_active_set_covers_universe_over_time() {
                 seen_commitments.insert(e.commitment_a);
                 seen_commitments.insert(e.commitment_b);
             }
-            QuorumResult::Agree(c) => { seen_commitments.insert(c); }
+            QuorumResult::Agree(c) => {
+                seen_commitments.insert(c);
+            }
             QuorumResult::Unavailable => {}
         }
         assert_eq!(pool.active_len(), 3, "active set size must be invariant");
         assert_eq!(pool.len(), 6, "universe size must be invariant");
     }
 
-    assert_eq!(seen_commitments.len(), 6,
-        "200 rotations from a 6-provider universe must expose all 6 providers");
+    assert_eq!(
+        seen_commitments.len(),
+        6,
+        "200 rotations from a 6-provider universe must expose all 6 providers"
+    );
 }
 
 // ── §22. ExposureEstimate is zero-initialized on a fresh pool ────────────────
@@ -936,7 +1040,10 @@ fn pool_rotation_active_set_covers_universe_over_time() {
 fn pool_exposure_starts_at_zero() {
     let pool: ProviderPool<SubstrateLedger> = ProviderPool::new(SamplingStrategy::RandomK(1));
     let est = pool.exposure_estimate();
-    assert_eq!(est.total_samples, 0, "fresh pool must have zero recorded samples");
+    assert_eq!(
+        est.total_samples, 0,
+        "fresh pool must have zero recorded samples"
+    );
     assert_eq!(est.max_selection_rate, 0.0);
     assert_eq!(est.selection_entropy_bits, 0.0);
 }
@@ -1005,8 +1112,13 @@ fn pool_exposure_entropy_triggered_rotation_fires() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::EntropyTriggered { min_entropy_bits: 0.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::EntropyTriggered {
+                min_entropy_bits: 0.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
     for i in 0u8..4 {
         pool.add(pid(i), SubstrateLedger::new());
@@ -1018,10 +1130,19 @@ fn pool_exposure_entropy_triggered_rotation_fires() {
     assert_eq!(pre_samples, 100);
     // entropy = 0.0 < 0.5 → maybe_rotate must fire.
     pool.maybe_rotate(&mut rng);
-    assert_eq!(pool.active_len(), 1, "active set size invariant must hold post-rotation");
-    assert_eq!(pool.len(), 4, "universe size must be invariant across rotation");
     assert_eq!(
-        pool.exposure_estimate().total_samples, 100,
+        pool.active_len(),
+        1,
+        "active set size invariant must hold post-rotation"
+    );
+    assert_eq!(
+        pool.len(),
+        4,
+        "universe size must be invariant across rotation"
+    );
+    assert_eq!(
+        pool.exposure_estimate().total_samples,
+        100,
         "rotation must not reset the exposure history"
     );
 }
@@ -1035,17 +1156,18 @@ fn pool_exposure_entropy_triggered_rotation_fires() {
 #[test]
 fn pool_exposure_membership_confidence_formula() {
     let est = ExposureEstimate {
-        selection_entropy_bits:          1.0,
+        selection_entropy_bits: 1.0,
         smoothed_selection_entropy_bits: 1.0,
-        max_selection_rate:              0.5,
-        total_samples:                   100,
-        effective_total_samples:         100.0, // no decay configured — equals total_samples
-        response_entropy_bits:           0.0,
-        smoothed_response_entropy_bits:  0.0,
-        response_total_samples:          0,
+        max_selection_rate: 0.5,
+        total_samples: 100,
+        effective_total_samples: 100.0, // no decay configured — equals total_samples
+        response_entropy_bits: 0.0,
+        smoothed_response_entropy_bits: 0.0,
+        response_total_samples: 0,
     };
     assert_eq!(
-        est.membership_confidence_after(0), 0.0,
+        est.membership_confidence_after(0),
+        0.0,
         "n=0 observations must yield zero confidence"
     );
     let c1 = est.membership_confidence_after(1);
@@ -1082,7 +1204,10 @@ fn pool_activation_weighted_concentrates_on_clean_providers() {
         .with_active_window(1)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_activation_strategy(ActivationStrategy::WeightedByReputation {
             influence: 10.0,
@@ -1095,11 +1220,11 @@ fn pool_activation_weighted_concentrates_on_clean_providers() {
     // 20 equivocations on pid(2): 10 calls × 2 (both evidence slots = pid(2))
     for _ in 0..10 {
         pool.record_equivocation(&EquivocationEvidence {
-            ops_pub:      [0u8; 32],
+            ops_pub: [0u8; 32],
             provider_a_id: pid(2),
             provider_b_id: pid(2),
-            commitment_a:  [0u8; 32],
-            commitment_b:  [1u8; 32],
+            commitment_a: [0u8; 32],
+            commitment_b: [1u8; 32],
         });
     }
 
@@ -1131,7 +1256,10 @@ fn pool_activation_weighted_uniform_when_all_clean() {
         .with_active_window(1)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_activation_strategy(ActivationStrategy::WeightedByReputation {
             influence: 10.0,
@@ -1170,7 +1298,10 @@ fn pool_exposure_reset_on_rotation_clears_history() {
         .with_active_window(1)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
     pool.add(pid(0), SubstrateLedger::new());
@@ -1184,7 +1315,8 @@ fn pool_exposure_reset_on_rotation_clears_history() {
     pool.force_rotate(&mut rng);
 
     assert_eq!(
-        pool.exposure_estimate().total_samples, 0,
+        pool.exposure_estimate().total_samples,
+        0,
         "with_exposure_reset() must zero the ExposureTracker after rotation"
     );
 }
@@ -1202,7 +1334,10 @@ fn pool_exposure_no_reset_preserves_history() {
         .with_active_window(1)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
@@ -1213,7 +1348,8 @@ fn pool_exposure_no_reset_preserves_history() {
     pool.force_rotate(&mut rng);
 
     assert_eq!(
-        pool.exposure_estimate().total_samples, 100,
+        pool.exposure_estimate().total_samples,
+        100,
         "without reset, rotation must not discard the exposure history"
     );
 }
@@ -1243,7 +1379,10 @@ fn pool_activation_floor_raises_activation_diversity() {
             .with_active_window(1)
             .with_rotation(
                 PoolRotationPolicy::Manual,
-                ChurnBudget { min_churn: 1, max_churn: 1 },
+                ChurnBudget {
+                    min_churn: 1,
+                    max_churn: 1,
+                },
             )
             .with_activation_strategy(ActivationStrategy::WeightedByReputation {
                 influence: 10.0,
@@ -1254,18 +1393,18 @@ fn pool_activation_floor_raises_activation_diversity() {
         p.add(pid(2), SubstrateLedger::new()); // bad provider
         for _ in 0..10 {
             p.record_equivocation(&EquivocationEvidence {
-                ops_pub:       [0u8; 32],
+                ops_pub: [0u8; 32],
                 provider_a_id: pid(2),
                 provider_b_id: pid(2),
-                commitment_a:  [0u8; 32],
-                commitment_b:  [1u8; 32],
+                commitment_a: [0u8; 32],
+                commitment_b: [1u8; 32],
             });
         }
         p
     };
 
     let mut pool_a = make_pool(0.001); // floor doesn't bind; bad ≈ 0.25% per rotation
-    let mut pool_b = make_pool(0.10);  // floor binds; bad ≈ 4.8% per rotation
+    let mut pool_b = make_pool(0.10); // floor binds; bad ≈ 4.8% per rotation
 
     for _ in 0..2000 {
         pool_a.force_rotate(&mut rng);
@@ -1281,7 +1420,8 @@ fn pool_activation_floor_raises_activation_diversity() {
         entropy_b > entropy_a + 0.10,
         "floor=0.10 must produce measurably greater activation diversity than \
          floor=0.001; got entropy_a={:.4}, entropy_b={:.4}",
-        entropy_a, entropy_b
+        entropy_a,
+        entropy_b
     );
 }
 
@@ -1297,15 +1437,18 @@ fn pool_activation_floor_raises_activation_diversity() {
 #[test]
 fn pool_liveness_dead_provider_excluded_from_sampling() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_liveness(5, 3600);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_liveness(5, 3600);
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new()); // will be killed
     pool.add(pid(2), SubstrateLedger::new());
 
-    for _ in 0..5 { pool.record_failure(pid(1)); } // 5 >= max_failures → dead
+    for _ in 0..5 {
+        pool.record_failure(pid(1));
+    } // 5 >= max_failures → dead
 
-    for _ in 0..1000 { let _ = pool.sample(&mut rng); }
+    for _ in 0..1000 {
+        let _ = pool.sample(&mut rng);
+    }
 
     let est = pool.exposure_estimate();
     assert_eq!(est.total_samples, 1000);
@@ -1330,16 +1473,19 @@ fn pool_liveness_dead_provider_excluded_from_sampling() {
 #[test]
 fn pool_liveness_recovery_after_record_response() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_liveness(5, 3600);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_liveness(5, 3600);
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
     pool.add(pid(2), SubstrateLedger::new());
 
-    for _ in 0..5 { pool.record_failure(pid(1)); }
+    for _ in 0..5 {
+        pool.record_failure(pid(1));
+    }
     pool.record_response(pid(1)); // recover
 
-    for _ in 0..1000 { let _ = pool.sample(&mut rng); }
+    for _ in 0..1000 {
+        let _ = pool.sample(&mut rng);
+    }
 
     assert!(
         pool.exposure_estimate().selection_entropy_bits >= 1.4,
@@ -1367,8 +1513,11 @@ fn pool_threshold_strategy_samples_from_live_providers() {
 
     for _ in 0..100 {
         let q = pool.sample(&mut rng);
-        assert_eq!(q.len(), 3,
-            "Threshold(2,4) with 3 live providers must always produce quorum of 3");
+        assert_eq!(
+            q.len(),
+            3,
+            "Threshold(2,4) with 3 live providers must always produce quorum of 3"
+        );
     }
     assert_eq!(pool.exposure_estimate().total_samples, 100);
 }
@@ -1382,34 +1531,54 @@ fn pool_threshold_strategy_samples_from_live_providers() {
 
 #[test]
 fn pool_reputation_decay_halves_at_half_life() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_reputation_decay(100);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_reputation_decay(100);
     pool.add(pid(0), SubstrateLedger::new());
 
     // 4 calls × 2 slots (both = pid(0)) = 8 raw equivocations
     for _ in 0..4 {
         pool.record_equivocation(&EquivocationEvidence {
-            ops_pub:       [0u8; 32],
+            ops_pub: [0u8; 32],
             provider_a_id: pid(0),
             provider_b_id: pid(0),
-            commitment_a:  [0u8; 32],
-            commitment_b:  [1u8; 32],
+            commitment_a: [0u8; 32],
+            commitment_b: [1u8; 32],
         });
     }
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let raw = 8.0f64;
 
-    let at_now = pool.effective_equivocation_count_at(pid(0), &SemanticClassId::ConsensusRelevant, now);
-    let at_hl  = pool.effective_equivocation_count_at(pid(0), &SemanticClassId::ConsensusRelevant, now + 100);
-    let at_2hl = pool.effective_equivocation_count_at(pid(0), &SemanticClassId::ConsensusRelevant, now + 200);
+    let at_now =
+        pool.effective_equivocation_count_at(pid(0), &SemanticClassId::ConsensusRelevant, now);
+    let at_hl = pool.effective_equivocation_count_at(
+        pid(0),
+        &SemanticClassId::ConsensusRelevant,
+        now + 100,
+    );
+    let at_2hl = pool.effective_equivocation_count_at(
+        pid(0),
+        &SemanticClassId::ConsensusRelevant,
+        now + 200,
+    );
 
-    assert!((at_now - raw).abs() < 0.1,
-        "at t=now, effective count must equal raw; got {}", at_now);
-    assert!((at_hl - raw * 0.5).abs() < 0.1,
-        "at t=now+half_life, effective count must be 50% of raw; got {}", at_hl);
-    assert!((at_2hl - raw * 0.25).abs() < 0.1,
-        "at t=now+2*half_life, effective count must be 25% of raw; got {}", at_2hl);
+    assert!(
+        (at_now - raw).abs() < 0.1,
+        "at t=now, effective count must equal raw; got {}",
+        at_now
+    );
+    assert!(
+        (at_hl - raw * 0.5).abs() < 0.1,
+        "at t=now+half_life, effective count must be 50% of raw; got {}",
+        at_hl
+    );
+    assert!(
+        (at_2hl - raw * 0.25).abs() < 0.1,
+        "at t=now+2*half_life, effective count must be 25% of raw; got {}",
+        at_2hl
+    );
 }
 
 // ── §36. Liveness filter and Threshold strategy compose correctly ─────────────
@@ -1426,20 +1595,30 @@ fn pool_liveness_threshold_integration() {
     for i in 0u8..5 {
         pool.add(pid(i), SubstrateLedger::new());
     }
-    for _ in 0..2 { pool.record_failure(pid(3)); } // dead
-    for _ in 0..2 { pool.record_failure(pid(4)); } // dead
+    for _ in 0..2 {
+        pool.record_failure(pid(3));
+    } // dead
+    for _ in 0..2 {
+        pool.record_failure(pid(4));
+    } // dead
 
     for _ in 0..50 {
         let q = pool.sample(&mut rng);
-        assert_eq!(q.len(), 3,
-            "Threshold(3,5) with 3 live providers must produce quorum of 3");
+        assert_eq!(
+            q.len(),
+            3,
+            "Threshold(3,5) with 3 live providers must produce quorum of 3"
+        );
     }
 
     pool.record_response(pid(3)); // restore pid(3) → 4 live
 
     let q = pool.sample(&mut rng);
-    assert_eq!(q.len(), 4,
-        "Threshold(3,5) with 4 live providers must produce quorum of 4");
+    assert_eq!(
+        q.len(),
+        4,
+        "Threshold(3,5) with 4 live providers must produce quorum of 4"
+    );
 }
 
 // ── §37. AfterEpochs resets the ExposureTracker only at multiples of n ─────────
@@ -1455,31 +1634,52 @@ fn pool_exposure_reset_after_n_epochs() {
         .with_active_window(2)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset_policy(ExposureResetPolicy::AfterEpochs { n: 3 });
-    for i in 0u8..4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 0u8..4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
-    for _ in 0..200 { let _ = pool.sample(&mut rng); }
-    assert!(pool.exposure_estimate().total_samples > 0,
-        "initial samples must be recorded");
+    for _ in 0..200 {
+        let _ = pool.sample(&mut rng);
+    }
+    assert!(
+        pool.exposure_estimate().total_samples > 0,
+        "initial samples must be recorded"
+    );
 
     pool.force_rotate(&mut rng); // epoch 1 — no reset
-    assert!(pool.exposure_estimate().total_samples > 0,
-        "epoch 1 (1%3≠0): tracker must be preserved");
+    assert!(
+        pool.exposure_estimate().total_samples > 0,
+        "epoch 1 (1%3≠0): tracker must be preserved"
+    );
 
     pool.force_rotate(&mut rng); // epoch 2 — no reset
-    assert!(pool.exposure_estimate().total_samples > 0,
-        "epoch 2 (2%3≠0): tracker must be preserved");
+    assert!(
+        pool.exposure_estimate().total_samples > 0,
+        "epoch 2 (2%3≠0): tracker must be preserved"
+    );
 
     pool.force_rotate(&mut rng); // epoch 3 — reset fires
-    assert_eq!(pool.exposure_estimate().total_samples, 0,
-        "epoch 3 (3%3=0): tracker must be reset");
+    assert_eq!(
+        pool.exposure_estimate().total_samples,
+        0,
+        "epoch 3 (3%3=0): tracker must be reset"
+    );
 
-    for _ in 0..50 { let _ = pool.sample(&mut rng); }
+    for _ in 0..50 {
+        let _ = pool.sample(&mut rng);
+    }
     pool.force_rotate(&mut rng); // epoch 4 — no reset
-    assert_eq!(pool.exposure_estimate().total_samples, 50,
-        "epoch 4 (4%3≠0): 50 post-reset samples must be preserved");
+    assert_eq!(
+        pool.exposure_estimate().total_samples,
+        50,
+        "epoch 4 (4%3≠0): 50 post-reset samples must be preserved"
+    );
 }
 
 // ── §38. EWMA smoothing lags behind raw entropy ──────────────────────────────
@@ -1492,11 +1692,14 @@ fn pool_exposure_reset_after_n_epochs() {
 #[test]
 fn pool_entropy_smoothing_lags_behind_raw() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_entropy_smoothing(0.01);
-    for i in 0u8..6 { pool.add(pid(i), SubstrateLedger::new()); }
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_entropy_smoothing(0.01);
+    for i in 0u8..6 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
-    for _ in 0..20 { let _ = pool.sample(&mut rng); }
+    for _ in 0..20 {
+        let _ = pool.sample(&mut rng);
+    }
 
     let est = pool.exposure_estimate();
     assert!(
@@ -1525,13 +1728,18 @@ fn pool_jittered_rotation_fires_at_zero_base() {
         .with_active_window(2)
         .with_rotation(
             PoolRotationPolicy::JitteredTimeBased {
-                base:             Duration::ZERO,
-                jitter_fraction:  0.0,
+                base: Duration::ZERO,
+                jitter_fraction: 0.0,
             },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset_policy(ExposureResetPolicy::OnRotation);
-    for i in 0u8..4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 0u8..4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
     let mut rotation_count = 0u32;
     for _ in 0..50 {
@@ -1569,17 +1777,22 @@ fn pool_weighted_composite_avoids_dead_dormant() {
         .with_active_window(2)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_activation_strategy(ActivationStrategy::WeightedComposite {
-            influence:          0.0,
-            floor:              1.0,
-            liveness_discount:  0.0,
+            influence: 0.0,
+            floor: 1.0,
+            liveness_discount: 0.0,
         })
         .with_liveness(1, 3600);
 
     // pid(0)..pid(3): live (2 active, 2 dormant)
-    for i in 0u8..4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 0u8..4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
     // pid(4), pid(5): dormant and dead
     pool.add(pid(4), SubstrateLedger::new());
     pool.add(pid(5), SubstrateLedger::new());
@@ -1588,7 +1801,9 @@ fn pool_weighted_composite_avoids_dead_dormant() {
 
     for _ in 0..100 {
         pool.force_rotate(&mut rng);
-        for _ in 0..10 { let _ = pool.sample(&mut rng); }
+        for _ in 0..10 {
+            let _ = pool.sample(&mut rng);
+        }
     }
 
     let est = pool.exposure_estimate();
@@ -1615,15 +1830,24 @@ fn pool_smoothed_entropy_prevents_thrashing() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(2)
         .with_rotation(
-            PoolRotationPolicy::EntropyTriggered { min_entropy_bits: 0.3 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::EntropyTriggered {
+                min_entropy_bits: 0.3,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset_policy(ExposureResetPolicy::OnRotation)
         .with_entropy_smoothing(0.5);
-    for i in 0u8..4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 0u8..4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
     // Phase A: build smoothed entropy to ~1.0 (2-provider uniform, alpha=0.5)
-    for _ in 0..200 { let _ = pool.sample(&mut rng); }
+    for _ in 0..200 {
+        let _ = pool.sample(&mut rng);
+    }
     assert!(
         pool.exposure_estimate().smoothed_selection_entropy_bits > 0.8,
         "smoothed entropy should converge to ~1.0 after 200 uniform samples; got {}",
@@ -1637,8 +1861,11 @@ fn pool_smoothed_entropy_prevents_thrashing() {
         "smoothed entropy must be preserved after reset (anti-thrashing invariant); got {}",
         pool.exposure_estimate().smoothed_selection_entropy_bits
     );
-    assert_eq!(pool.exposure_estimate().total_samples, 0,
-        "OnRotation must zero the raw sample history");
+    assert_eq!(
+        pool.exposure_estimate().total_samples,
+        0,
+        "OnRotation must zero the raw sample history"
+    );
 
     // Phase C: one sample → total_samples = 1, smoothed updated but still > 0.3
     let _ = pool.sample(&mut rng);
@@ -1646,7 +1873,8 @@ fn pool_smoothed_entropy_prevents_thrashing() {
     // Phase D: EntropyTriggered checks smoothed (~0.5) > 0.3 → must NOT re-fire
     pool.maybe_rotate(&mut rng);
     assert_eq!(
-        pool.exposure_estimate().total_samples, 1,
+        pool.exposure_estimate().total_samples,
+        1,
         "EntropyTriggered must use smoothed entropy; with smoothed > threshold, \
          rotation must not fire immediately after a reset — total_samples must remain 1"
     );
@@ -1662,28 +1890,33 @@ fn pool_smoothed_entropy_prevents_thrashing() {
 #[test]
 fn pool_exposure_decay_halves_at_half_life() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(4))
-        .with_exposure_decay(100);
-    for i in 0u8..4 { pool.add(pid(i), SubstrateLedger::new()); }
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(4)).with_exposure_decay(100);
+    for i in 0u8..4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
-    for _ in 0..1000 { let _ = pool.sample(&mut rng); }
+    for _ in 0..1000 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let now   = now_secs();
+    let now = now_secs();
     let at_t0 = pool.exposure_estimate_at(now);
     let at_hl = pool.exposure_estimate_at(now + 100);
     let at_2hl = pool.exposure_estimate_at(now + 200);
 
     // Ratio cancels clock drift: at_hl / at_t0 == 0.5 exactly.
-    let ratio_hl  = at_hl.effective_total_samples  / at_t0.effective_total_samples;
+    let ratio_hl = at_hl.effective_total_samples / at_t0.effective_total_samples;
     let ratio_2hl = at_2hl.effective_total_samples / at_t0.effective_total_samples;
 
     assert!(
         (ratio_hl - 0.5).abs() < 0.001,
-        "effective_total_samples must halve at one half-life; ratio = {:.4}", ratio_hl
+        "effective_total_samples must halve at one half-life; ratio = {:.4}",
+        ratio_hl
     );
     assert!(
         (ratio_2hl - 0.25).abs() < 0.001,
-        "effective_total_samples must quarter at two half-lives; ratio = {:.4}", ratio_2hl
+        "effective_total_samples must quarter at two half-lives; ratio = {:.4}",
+        ratio_2hl
     );
 }
 
@@ -1698,13 +1931,16 @@ fn pool_exposure_decay_approaches_zero_at_ten_half_lives() {
     let mut rng = OsRng;
     // RandomK(1): one provider per quorum, so total_samples == quorum count and
     // p_i = appearances[i] / total_samples forms a proper probability distribution.
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_exposure_decay(100);
-    for i in 0u8..4 { pool.add(pid(i), SubstrateLedger::new()); }
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_exposure_decay(100);
+    for i in 0u8..4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
-    for _ in 0..1000 { let _ = pool.sample(&mut rng); }
+    for _ in 0..1000 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let now     = now_secs();
+    let now = now_secs();
     let at_10hl = pool.exposure_estimate_at(now + 1000);
 
     assert!(
@@ -1715,7 +1951,8 @@ fn pool_exposure_decay_approaches_zero_at_ten_half_lives() {
     // Entropy is ratio-based — unaffected by decay.
     assert!(
         at_10hl.selection_entropy_bits > 1.9,
-        "entropy must be unchanged by decay; got {:.4}", at_10hl.selection_entropy_bits
+        "entropy must be unchanged by decay; got {:.4}",
+        at_10hl.selection_entropy_bits
     );
 }
 
@@ -1731,30 +1968,46 @@ fn pool_active_set_snapshot_and_epoch_similarity() {
         .with_active_window(2)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 2 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 2,
+            },
         );
-    for i in 0u8..4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 0u8..4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
     let snap_a = pool.active_set_snapshot();
     pool.force_rotate(&mut rng);
     let snap_b = pool.active_set_snapshot();
 
     // Self-similarity is 1.0.
-    assert_eq!(epoch_similarity(&snap_a, &snap_a), 1.0,
-        "identical sets must have Jaccard = 1.0");
+    assert_eq!(
+        epoch_similarity(&snap_a, &snap_a),
+        1.0,
+        "identical sets must have Jaccard = 1.0"
+    );
 
     // Two empty slices → 1.0.
-    assert_eq!(epoch_similarity(&[], &[]), 1.0,
-        "both empty → Jaccard = 1.0");
+    assert_eq!(
+        epoch_similarity(&[], &[]),
+        1.0,
+        "both empty → Jaccard = 1.0"
+    );
 
     // One empty slice → 0.0 (union = non-empty set, intersection = empty).
-    assert_eq!(epoch_similarity(&snap_a, &[]), 0.0,
-        "non-empty vs empty → Jaccard = 0.0");
+    assert_eq!(
+        epoch_similarity(&snap_a, &[]),
+        0.0,
+        "non-empty vs empty → Jaccard = 0.0"
+    );
 
     // Cross-epoch similarity is in [0.0, 1.0].
     let sim = epoch_similarity(&snap_a, &snap_b);
-    assert!(sim >= 0.0 && sim <= 1.0,
-        "epoch_similarity must be in [0.0, 1.0]; got {sim:.4}");
+    assert!(
+        (0.0..=1.0).contains(&sim),
+        "epoch_similarity must be in [0.0, 1.0]; got {sim:.4}"
+    );
 
     // Hard-coded disjoint case.
     assert_eq!(
@@ -1782,8 +2035,7 @@ fn pool_adaptive_dummy_probability_scales_with_pressure() {
     let mut rng = OsRng;
 
     // Fresh pool: no samples yet.
-    let pool_fresh: ProviderPool<SubstrateLedger> =
-        ProviderPool::new(SamplingStrategy::RandomK(4));
+    let pool_fresh: ProviderPool<SubstrateLedger> = ProviderPool::new(SamplingStrategy::RandomK(4));
     assert!(
         (pool_fresh.effective_dummy_probability() - DUMMY_QUERY_PROBABILITY).abs() < 0.001,
         "fresh pool must yield base dummy probability; got {}",
@@ -1793,7 +2045,9 @@ fn pool_adaptive_dummy_probability_scales_with_pressure() {
     // Single-provider pool: max_rate == 1.0 (only one candidate is ever selected).
     let mut pool_hot = ProviderPool::new(SamplingStrategy::RandomK(1));
     pool_hot.add(pid(0), SubstrateLedger::new());
-    for _ in 0..1000 { let _ = pool_hot.sample(&mut rng); }
+    for _ in 0..1000 {
+        let _ = pool_hot.sample(&mut rng);
+    }
 
     let p = pool_hot.effective_dummy_probability();
     assert!(
@@ -1824,18 +2078,34 @@ fn pool_visibility_capped_prefers_fresh_over_overexposed() {
 
     let mut pool_u = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
-        .with_rotation(PoolRotationPolicy::Manual, ChurnBudget { min_churn: 1, max_churn: 1 })
+        .with_rotation(
+            PoolRotationPolicy::Manual,
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
+        )
         .with_activation_strategy(ActivationStrategy::Uniform);
-    for i in 0u8..3 { pool_u.add(pid(i), SubstrateLedger::new()); }
+    for i in 0u8..3 {
+        pool_u.add(pid(i), SubstrateLedger::new());
+    }
 
     let mut pool_v = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
-        .with_rotation(PoolRotationPolicy::Manual, ChurnBudget { min_churn: 1, max_churn: 1 })
+        .with_rotation(
+            PoolRotationPolicy::Manual,
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
+        )
         .with_activation_strategy(ActivationStrategy::VisibilityCapped {
             max_visibility_ratio: 0.10,
             floor: 0.01,
         });
-    for i in 0u8..3 { pool_v.add(pid(i), SubstrateLedger::new()); }
+    for i in 0u8..3 {
+        pool_v.add(pid(i), SubstrateLedger::new());
+    }
 
     // Pre-load heavy exposure for pid(0) (the only active provider).
     // After this: rate(pid(0)) = 1.0; rate(pid(1)) = rate(pid(2)) = 0.0.
@@ -1850,10 +2120,14 @@ fn pool_visibility_capped_prefers_fresh_over_overexposed() {
     let mut pid0_active_v = 0usize;
     for _ in 0..100 {
         pool_u.force_rotate(&mut rng);
-        if pool_u.active_set_snapshot().contains(&pid(0)) { pid0_active_u += 1; }
+        if pool_u.active_set_snapshot().contains(&pid(0)) {
+            pid0_active_u += 1;
+        }
 
         pool_v.force_rotate(&mut rng);
-        if pool_v.active_set_snapshot().contains(&pid(0)) { pid0_active_v += 1; }
+        if pool_v.active_set_snapshot().contains(&pid(0)) {
+            pid0_active_v += 1;
+        }
     }
 
     assert!(
@@ -1881,7 +2155,9 @@ fn pool_sampling_weighted_composite_softly_includes_dead() {
     let mut rng = OsRng;
 
     let mut pool_rep = ProviderPool::new(SamplingStrategy::WeightedByReputation {
-        k: 1, influence: 0.0, floor: 1.0,
+        k: 1,
+        influence: 0.0,
+        floor: 1.0,
     })
     .with_liveness(2, u64::MAX);
     pool_rep.add(pid(0), SubstrateLedger::new());
@@ -1891,7 +2167,10 @@ fn pool_sampling_weighted_composite_softly_includes_dead() {
     pool_rep.record_failure(pid(0));
 
     let mut pool_comp = ProviderPool::new(SamplingStrategy::WeightedComposite {
-        k: 1, influence: 0.0, floor: 1.0, liveness_discount: 1.0,
+        k: 1,
+        influence: 0.0,
+        floor: 1.0,
+        liveness_discount: 1.0,
     })
     .with_liveness(2, u64::MAX);
     pool_comp.add(pid(0), SubstrateLedger::new());
@@ -1906,14 +2185,22 @@ fn pool_sampling_weighted_composite_softly_includes_dead() {
     }
 
     // Use exposure_distribution() to measure per-provider selection rates.
-    let rep_pid0_rate = pool_rep.exposure_distribution().rates.iter()
+    let rep_pid0_rate = pool_rep
+        .exposure_distribution()
+        .rates
+        .iter()
         .find(|(id, _)| *id == pid(0))
         .map(|(_, r)| *r)
         .unwrap_or(0.0);
-    assert_eq!(rep_pid0_rate, 0.0,
-        "WeightedByReputation must never select dead pid(0) (hard-excluded via live_indices)");
+    assert_eq!(
+        rep_pid0_rate, 0.0,
+        "WeightedByReputation must never select dead pid(0) (hard-excluded via live_indices)"
+    );
 
-    let comp_pid0_rate = pool_comp.exposure_distribution().rates.iter()
+    let comp_pid0_rate = pool_comp
+        .exposure_distribution()
+        .rates
+        .iter()
         .find(|(id, _)| *id == pid(0))
         .map(|(_, r)| *r)
         .unwrap_or(0.0);
@@ -1934,7 +2221,10 @@ fn pool_sampling_weighted_composite_at_zero_discount_excludes_dead() {
     let mut rng = OsRng;
 
     let mut pool = ProviderPool::new(SamplingStrategy::WeightedComposite {
-        k: 1, influence: 0.0, floor: 1.0, liveness_discount: 0.0,
+        k: 1,
+        influence: 0.0,
+        floor: 1.0,
+        liveness_discount: 0.0,
     })
     .with_liveness(2, u64::MAX);
     pool.add(pid(0), SubstrateLedger::new());
@@ -1947,7 +2237,10 @@ fn pool_sampling_weighted_composite_at_zero_discount_excludes_dead() {
         let _ = pool.sample(&mut rng);
     }
 
-    let pid0_rate = pool.exposure_distribution().rates.iter()
+    let pid0_rate = pool
+        .exposure_distribution()
+        .rates
+        .iter()
         .find(|(id, _)| *id == pid(0))
         .map(|(_, r)| *r)
         .unwrap_or(0.0);
@@ -2024,20 +2317,33 @@ fn pool_jsd_triggered_no_fire_without_baseline() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::JsdTriggered { min_divergence: 1.0 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::JsdTriggered {
+                min_divergence: 1.0,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
 
-    for _ in 0..100 { let _ = pool.sample(&mut rng); }
+    for _ in 0..100 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let mut before = pool.active_set_snapshot(); before.sort();
-    for _ in 0..20 { pool.maybe_rotate(&mut rng); }
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
+    for _ in 0..20 {
+        pool.maybe_rotate(&mut rng);
+    }
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_eq!(before, after,
-        "JsdTriggered must not fire without a baseline distribution (previous_distribution = None)");
+    assert_eq!(
+        before, after,
+        "JsdTriggered must not fire without a baseline distribution (previous_distribution = None)"
+    );
 }
 
 // ── §53. JsdTriggered fires when consecutive distributions are stable ─────────
@@ -2057,26 +2363,41 @@ fn pool_jsd_triggered_fires_when_distribution_stable() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_rotation(
-            PoolRotationPolicy::JsdTriggered { min_divergence: 0.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::JsdTriggered {
+                min_divergence: 0.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0u8..8 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 0u8..8 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
     // Epoch 1: build uniform distribution over pid(0..3).
-    for _ in 0..400 { let _ = pool.sample(&mut rng); }
+    for _ in 0..400 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // Establish baseline. One of pid(0..3) evicted, pid(4) activated.
     pool.force_rotate(&mut rng);
 
     // Epoch 2: build uniform distribution over new 4-provider active set.
-    for _ in 0..400 { let _ = pool.sample(&mut rng); }
+    for _ in 0..400 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let mut before = pool.active_set_snapshot(); before.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
     pool.maybe_rotate(&mut rng);
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_ne!(before, after,
-        "JsdTriggered must fire when consecutive epoch distributions are stable (JSD ≈ 0.25 < 0.5)");
+    assert_ne!(
+        before, after,
+        "JsdTriggered must fire when consecutive epoch distributions are stable (JSD ≈ 0.25 < 0.5)"
+    );
 }
 
 // ── §54. JsdTriggered does not fire when distributions are disjoint ───────────
@@ -2094,28 +2415,41 @@ fn pool_jsd_triggered_no_fire_when_distribution_shifted() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::JsdTriggered { min_divergence: 0.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::JsdTriggered {
+                min_divergence: 0.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
 
     // Epoch 1: pid(0) selected every time → distribution [pid(0)=1.0].
-    for _ in 0..100 { let _ = pool.sample(&mut rng); }
+    for _ in 0..100 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // force_rotate() saves baseline [pid(0)=1.0], resets tracker, activates pid(1).
     pool.force_rotate(&mut rng);
 
     // Epoch 2: pid(1) selected every time → distribution [pid(1)=1.0].
-    for _ in 0..100 { let _ = pool.sample(&mut rng); }
+    for _ in 0..100 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let mut before = pool.active_set_snapshot(); before.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
     pool.maybe_rotate(&mut rng);
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_eq!(before, after,
-        "JsdTriggered must not fire when distributions are disjoint (JSD=1.0 > min_divergence=0.5)");
+    assert_eq!(
+        before, after,
+        "JsdTriggered must not fire when distributions are disjoint (JSD=1.0 > min_divergence=0.5)"
+    );
 }
 
 // ── §55. JsdTriggered with min_divergence=0.0 never fires ────────────────────
@@ -2130,23 +2464,38 @@ fn pool_jsd_triggered_zero_threshold_never_fires() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::JsdTriggered { min_divergence: 0.0 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::JsdTriggered {
+                min_divergence: 0.0,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
 
     // Establish baseline.
-    for _ in 0..100 { let _ = pool.sample(&mut rng); }
+    for _ in 0..100 {
+        let _ = pool.sample(&mut rng);
+    }
     pool.force_rotate(&mut rng);
-    for _ in 0..100 { let _ = pool.sample(&mut rng); }
+    for _ in 0..100 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let mut before = pool.active_set_snapshot(); before.sort();
-    for _ in 0..10 { pool.maybe_rotate(&mut rng); }
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
+    for _ in 0..10 {
+        pool.maybe_rotate(&mut rng);
+    }
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_eq!(before, after,
-        "JsdTriggered with min_divergence=0.0 must never fire (JSD >= 0.0 always)");
+    assert_eq!(
+        before, after,
+        "JsdTriggered with min_divergence=0.0 must never fire (JSD >= 0.0 always)"
+    );
 }
 
 // ── §56. Baseline updates after each rotation ─────────────────────────────────
@@ -2173,30 +2522,43 @@ fn pool_jsd_triggered_baseline_updated_on_each_rotation() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(2)
         .with_rotation(
-            PoolRotationPolicy::JsdTriggered { min_divergence: 0.6 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::JsdTriggered {
+                min_divergence: 0.6,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
     pool.add(pid(2), SubstrateLedger::new());
-    pool.add(pid(3), SubstrateLedger::new());   // dormant=2 ≥ active_window=2 → floor gate passes
+    pool.add(pid(3), SubstrateLedger::new()); // dormant=2 ≥ active_window=2 → floor gate passes
 
     // Epoch 1: uniform over {pid(0), pid(1)}.
-    for _ in 0..200 { let _ = pool.sample(&mut rng); }
+    for _ in 0..200 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // Establish baseline_1; pid(2) activated, one of pid(0,1) dormant.
     pool.force_rotate(&mut rng);
 
     // Epoch 2: uniform over new 2-provider active set.
-    for _ in 0..200 { let _ = pool.sample(&mut rng); }
+    for _ in 0..200 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let mut before = pool.active_set_snapshot(); before.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
     pool.maybe_rotate(&mut rng);
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_ne!(before, after,
+    assert_ne!(
+        before, after,
         "JsdTriggered must fire in epoch 2 (JSD ≈ 0.5 < 0.6); \
-         this also verifies force_rotate() correctly set the baseline");
+         this also verifies force_rotate() correctly set the baseline"
+    );
 }
 
 // ── §57. Uniform pool → κ ≈ 0.0 and spectral_concentration ≈ 0.0 ──────────
@@ -2207,18 +2569,27 @@ fn pool_jsd_triggered_baseline_updated_on_each_rotation() {
 #[test]
 fn pool_convergence_pressure_uniform_is_zero_kappa() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
-    for i in 0..4u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
+    for i in 0..4u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
-    for _ in 0..4000 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4000 {
+        let _ = pool.sample(&mut rng);
+    }
 
     let p = pool.convergence_pressure();
     assert_eq!(p.active_n, 4);
-    assert!(p.kappa < 0.05,
-        "uniform 4-provider pool must have κ ≈ 0.0, got {}", p.kappa);
-    assert!(p.spectral_concentration < 0.05,
-        "uniform pool must have spectral_concentration ≈ 0.0, got {}", p.spectral_concentration);
+    assert!(
+        p.kappa < 0.05,
+        "uniform 4-provider pool must have κ ≈ 0.0, got {}",
+        p.kappa
+    );
+    assert!(
+        p.spectral_concentration < 0.05,
+        "uniform pool must have spectral_concentration ≈ 0.0, got {}",
+        p.spectral_concentration
+    );
 }
 
 // ── §58. Single-active-provider pool → κ = 1.0, concentration = 0.0 ────────
@@ -2229,18 +2600,21 @@ fn pool_convergence_pressure_uniform_is_zero_kappa() {
 #[test]
 fn pool_convergence_pressure_single_active_is_max_kappa() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(1);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(1);
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
 
-    for _ in 0..100 { let _ = pool.sample(&mut rng); }
+    for _ in 0..100 {
+        let _ = pool.sample(&mut rng);
+    }
 
     let p = pool.convergence_pressure();
     assert_eq!(p.active_n, 1);
     assert_eq!(p.kappa, 1.0, "single-active pool must have κ = 1.0");
-    assert_eq!(p.spectral_concentration, 0.0,
-        "with active_n=1, uniform_rate=1.0 and max_rate=1.0 → concentration = 0.0");
+    assert_eq!(
+        p.spectral_concentration, 0.0,
+        "with active_n=1, uniform_rate=1.0 and max_rate=1.0 → concentration = 0.0"
+    );
 }
 
 // ── §59. ConvergenceTriggered fires when pool is concentrated ───────────────
@@ -2255,19 +2629,28 @@ fn pool_convergence_triggered_fires_when_concentrated() {
         .with_active_window(1)
         .with_rotation(
             PoolRotationPolicy::ConvergenceTriggered { max_kappa: 0.3 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
 
-    for _ in 0..10 { let _ = pool.sample(&mut rng); }
+    for _ in 0..10 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let mut before = pool.active_set_snapshot(); before.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
     pool.maybe_rotate(&mut rng);
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_ne!(before, after,
-        "ConvergenceTriggered must fire: κ=1.0 > max_kappa=0.3");
+    assert_ne!(
+        before, after,
+        "ConvergenceTriggered must fire: κ=1.0 > max_kappa=0.3"
+    );
 }
 
 // ── §60. ConvergenceTriggered does not fire when pool is uniform ─────────────
@@ -2282,22 +2665,29 @@ fn pool_convergence_triggered_no_fire_when_uniform() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::ConvergenceTriggered { max_kappa: 0.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
     pool.add(pid(2), SubstrateLedger::new());
     pool.add(pid(3), SubstrateLedger::new());
-    pool.add(pid(4), SubstrateLedger::new());  // dormant
+    pool.add(pid(4), SubstrateLedger::new()); // dormant
 
-    for _ in 0..4000 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4000 {
+        let _ = pool.sample(&mut rng);
+    }
 
     let before = pool.active_set_snapshot();
     pool.maybe_rotate(&mut rng);
     let after = pool.active_set_snapshot();
 
-    assert_eq!(before, after,
-        "ConvergenceTriggered must not fire: κ ≈ 0.0 < max_kappa=0.5");
+    assert_eq!(
+        before, after,
+        "ConvergenceTriggered must not fire: κ ≈ 0.0 < max_kappa=0.5"
+    );
 }
 
 // ── §61. samples_to_saturation boundaries ───────────────────────────────────
@@ -2309,19 +2699,26 @@ fn pool_convergence_triggered_no_fire_when_uniform() {
 #[test]
 fn pool_convergence_pressure_samples_to_saturation() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(1);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(1);
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
 
     // Phase 1: no samples yet — rate=0, saturation undefined.
-    assert_eq!(pool.convergence_pressure().samples_to_saturation, None,
-        "rate=0 before any samples → None");
+    assert_eq!(
+        pool.convergence_pressure().samples_to_saturation,
+        None,
+        "rate=0 before any samples → None"
+    );
 
     // Phase 2: 10 samples with single active provider → rate=1.0, confidence=1.0 ≥ 0.5.
-    for _ in 0..10 { let _ = pool.sample(&mut rng); }
-    assert_eq!(pool.convergence_pressure().samples_to_saturation, Some(0),
-        "rate=1.0 → confidence=1.0 ≥ 0.5 → already saturated → Some(0)");
+    for _ in 0..10 {
+        let _ = pool.sample(&mut rng);
+    }
+    assert_eq!(
+        pool.convergence_pressure().samples_to_saturation,
+        Some(0),
+        "rate=1.0 → confidence=1.0 ≥ 0.5 → already saturated → Some(0)"
+    );
 }
 
 // ── §62. kappa_velocity is None before first rotation ────────────────────────
@@ -2332,15 +2729,19 @@ fn pool_convergence_pressure_samples_to_saturation() {
 #[test]
 fn pool_kappa_velocity_none_before_first_rotation() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(1);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(1);
     pool.add(pid(0), SubstrateLedger::new());
     pool.add(pid(1), SubstrateLedger::new());
 
-    for _ in 0..10 { let _ = pool.sample(&mut rng); }
+    for _ in 0..10 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    assert_eq!(pool.convergence_pressure().kappa_velocity, None,
-        "no rotation has occurred → previous_kappa = None → kappa_velocity = None");
+    assert_eq!(
+        pool.convergence_pressure().kappa_velocity,
+        None,
+        "no rotation has occurred → previous_kappa = None → kappa_velocity = None"
+    );
 }
 
 // ── §63. kappa_velocity > 0 when pressure grows after rotation ───────────────
@@ -2361,21 +2762,33 @@ fn pool_kappa_velocity_reflects_pressure_change() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // Epoch 1: uniform distribution → κ_prev ≈ 0.
-    for _ in 0..4000 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4000 {
+        let _ = pool.sample(&mut rng);
+    }
     pool.force_rotate(&mut rng); // snapshots κ_prev ≈ 0, resets tracker.
 
     // Epoch 2: single sample → κ = 1.0.
     let _ = pool.sample(&mut rng);
 
-    let velocity = pool.convergence_pressure().kappa_velocity.expect("previous_kappa set by force_rotate");
-    assert!(velocity > 0.5,
-        "κ grew from ≈0 to 1.0 → kappa_velocity must be > 0.5, got {velocity}");
+    let velocity = pool
+        .convergence_pressure()
+        .kappa_velocity
+        .expect("previous_kappa set by force_rotate");
+    assert!(
+        velocity > 0.5,
+        "κ grew from ≈0 to 1.0 → kappa_velocity must be > 0.5, got {velocity}"
+    );
 }
 
 // ── §64. transition_entropy matches the combinatorial formula ─────────────────
@@ -2390,15 +2803,24 @@ fn pool_transition_entropy_formula() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 2, max_churn: 2 },
+            ChurnBudget {
+                min_churn: 2,
+                max_churn: 2,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
-    let te = pool.convergence_pressure().transition_entropy
+    let te = pool
+        .convergence_pressure()
+        .transition_entropy
         .expect("4 dormant providers → transition_entropy must be Some");
     let expected = (6.0f64).log2() + (6.0f64).log2(); // log₂(C(4,2)) * 2
-    assert!((te - expected).abs() < 0.001,
-        "transition_entropy must be ≈{expected:.3}, got {te:.6}");
+    assert!(
+        (te - expected).abs() < 0.001,
+        "transition_entropy must be ≈{expected:.3}, got {te:.6}"
+    );
 }
 
 // ── §65. active_set_halflife_epochs follows the formula exactly ───────────────
@@ -2414,20 +2836,32 @@ fn pool_active_set_halflife_epochs_formula() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 2, max_churn: 2 },
+            ChurnBudget {
+                min_churn: 2,
+                max_churn: 2,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // Before any rotation: last_churn = None → halflife = None.
-    assert_eq!(pool.convergence_pressure().active_set_halflife_epochs, None,
-        "no rotation yet → last_churn = None → halflife = None");
+    assert_eq!(
+        pool.convergence_pressure().active_set_halflife_epochs,
+        None,
+        "no rotation yet → last_churn = None → halflife = None"
+    );
 
     pool.force_rotate(&mut rng); // sets last_churn = 2.
 
-    let halflife = pool.convergence_pressure().active_set_halflife_epochs
+    let halflife = pool
+        .convergence_pressure()
+        .active_set_halflife_epochs
         .expect("force_rotate() sets last_churn → halflife must be Some");
-    assert!((halflife - 1.0).abs() < 1e-9,
-        "halflife must be exactly 1.0 epoch, got {halflife}");
+    assert!(
+        (halflife - 1.0).abs() < 1e-9,
+        "halflife must be exactly 1.0 epoch, got {halflife}"
+    );
 }
 
 // ── §66. VelocityTriggered fires when κ is growing ───────────────────────────
@@ -2443,25 +2877,38 @@ fn pool_velocity_triggered_fires_when_kappa_growing() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::VelocityTriggered { max_velocity: 0.0 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // Epoch 1: uniform → κ_prev ≈ 0. force_rotate() establishes baseline.
-    for _ in 0..4000 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4000 {
+        let _ = pool.sample(&mut rng);
+    }
     pool.force_rotate(&mut rng);
 
     // Epoch 2: 100 samples → Steady (100 ≥ 4*active_n=16); κ > 0 with near-certainty
     // (P(exact uniform split) ≈ 0). velocity = κ_current - κ_prev ≈ κ_current > 0.0.
-    for _ in 0..100 { let _ = pool.sample(&mut rng); }
+    for _ in 0..100 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let mut before = pool.active_set_snapshot(); before.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
     pool.maybe_rotate(&mut rng);
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_ne!(before, after,
-        "VelocityTriggered must fire: kappa_velocity ≈ 1.0 > max_velocity=0.0");
+    assert_ne!(
+        before, after,
+        "VelocityTriggered must fire: kappa_velocity ≈ 1.0 > max_velocity=0.0"
+    );
 }
 
 // Phase 24 invariants:
@@ -2478,14 +2925,22 @@ fn pool_integral_triggered_zero_before_calls() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 10.0 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 10.0,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
     pool.add([0; 32], SubstrateLedger::new());
     pool.add([1; 32], SubstrateLedger::new());
 
-    assert_eq!(pool.convergence_pressure().accumulated_pressure, 0.0,
-        "accumulated_pressure must be 0.0 before any maybe_rotate() calls");
+    assert_eq!(
+        pool.convergence_pressure().accumulated_pressure,
+        0.0,
+        "accumulated_pressure must be 0.0 before any maybe_rotate() calls"
+    );
 }
 
 // ── §68. accumulated_pressure increments by κ on each maybe_rotate() call ─────
@@ -2497,19 +2952,32 @@ fn pool_integral_triggered_accumulates_kappa() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 100.0 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 100.0,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // 4000 samples → uniform → κ ≈ 0 (but still ≥ 0; accumulator grows).
-    for _ in 0..4000 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4000 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    for _ in 0..5 { pool.maybe_rotate(&mut rng); }
+    for _ in 0..5 {
+        pool.maybe_rotate(&mut rng);
+    }
 
-    assert!(pool.convergence_pressure().accumulated_pressure > 0.0,
-        "accumulated_pressure must grow after maybe_rotate() calls");
+    assert!(
+        pool.convergence_pressure().accumulated_pressure > 0.0,
+        "accumulated_pressure must grow after maybe_rotate() calls"
+    );
 }
 
 // ── §69. IntegralTriggered fires when accumulated sum exceeds threshold ─────────
@@ -2523,22 +2991,35 @@ fn pool_integral_triggered_fires_when_sum_exceeds_threshold() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 1.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 1.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // 4 samples → Steady (4 ≥ 4*1). κ=1.0. Two calls needed: 1.0+1.0=2.0 > 1.5 → fires.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let mut before = pool.active_set_snapshot(); before.sort();
-    pool.maybe_rotate(&mut rng);    // accumulated = 1.0 → PolicyThresholdNotMet
-    pool.maybe_rotate(&mut rng);    // accumulated = 2.0 → Rotated
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
+    pool.maybe_rotate(&mut rng); // accumulated = 1.0 → PolicyThresholdNotMet
+    pool.maybe_rotate(&mut rng); // accumulated = 2.0 → Rotated
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_ne!(before, after,
-        "IntegralTriggered must fire: accumulated_kappa (2.0) > threshold (1.5)");
+    assert_ne!(
+        before, after,
+        "IntegralTriggered must fire: accumulated_kappa (2.0) > threshold (1.5)"
+    );
 }
 
 // ── §70. accumulated_kappa resets to 0.0 after each rotation ──────────────────
@@ -2550,20 +3031,32 @@ fn pool_integral_triggered_resets_after_rotation() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 1.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 1.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // 4 samples → Steady (4 ≥ 4*1). First call accumulates 1.0 → no fire.
     // Second call accumulates 2.0 > 1.5 → fires → do_rotate() resets accumulated_kappa.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
-    pool.maybe_rotate(&mut rng);    // accumulated = 1.0 → PolicyThresholdNotMet
-    pool.maybe_rotate(&mut rng);    // accumulated = 2.0 → Rotated; resets to 0.0
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
+    pool.maybe_rotate(&mut rng); // accumulated = 1.0 → PolicyThresholdNotMet
+    pool.maybe_rotate(&mut rng); // accumulated = 2.0 → Rotated; resets to 0.0
 
-    assert_eq!(pool.convergence_pressure().accumulated_pressure, 0.0,
-        "accumulated_kappa must reset to 0.0 after rotation");
+    assert_eq!(
+        pool.convergence_pressure().accumulated_pressure,
+        0.0,
+        "accumulated_kappa must reset to 0.0 after rotation"
+    );
 }
 
 // ── §71. Non-IntegralTriggered policies never mutate accumulated_kappa ─────────
@@ -2575,15 +3068,27 @@ fn pool_non_integral_policy_leaves_accumulator_zero() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
-    for _ in 0..100 { let _ = pool.sample(&mut rng); }
-    for _ in 0..10  { pool.maybe_rotate(&mut rng); }
+    for _ in 0..100 {
+        let _ = pool.sample(&mut rng);
+    }
+    for _ in 0..10 {
+        pool.maybe_rotate(&mut rng);
+    }
 
-    assert_eq!(pool.convergence_pressure().accumulated_pressure, 0.0,
-        "accumulated_kappa must remain 0.0 for non-IntegralTriggered policies");
+    assert_eq!(
+        pool.convergence_pressure().accumulated_pressure,
+        0.0,
+        "accumulated_kappa must remain 0.0 for non-IntegralTriggered policies"
+    );
 }
 
 // Phase 25 invariants:
@@ -2601,21 +3106,32 @@ fn pool_cooldown_blocks_rotation_before_expiry() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 0.0 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 0.0,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_cooldown(Duration::MAX);
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // 1 sample → κ=1.0 → accumulated_kappa would exceed 0.0 → policy would fire.
     // But cooldown(MAX) blocks: elapsed ≈ 0 < MAX.
     let _ = pool.sample(&mut rng);
-    let mut before = pool.active_set_snapshot(); before.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
     pool.maybe_rotate(&mut rng);
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_eq!(before, after,
-        "cooldown(MAX) must block rotation even when policy condition is met");
+    assert_eq!(
+        before, after,
+        "cooldown(MAX) must block rotation even when policy condition is met"
+    );
 }
 
 // ── §73. Duration::ZERO cooldown never blocks ────────────────────────────────
@@ -2628,22 +3144,35 @@ fn pool_cooldown_zero_duration_never_blocks() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 1.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 1.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_cooldown(Duration::ZERO);
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // 4 samples → Steady. Two calls: 1.0+1.0=2.0 > 1.5 → fires on second.
     // ZERO cooldown passes both calls (elapsed ≥ ZERO always).
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
-    let mut before = pool.active_set_snapshot(); before.sort();
-    pool.maybe_rotate(&mut rng);    // accumulated = 1.0 → PolicyThresholdNotMet
-    pool.maybe_rotate(&mut rng);    // accumulated = 2.0 → Rotated
-    let mut after = pool.active_set_snapshot(); after.sort();
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
+    let mut before = pool.active_set_snapshot();
+    before.sort();
+    pool.maybe_rotate(&mut rng); // accumulated = 1.0 → PolicyThresholdNotMet
+    pool.maybe_rotate(&mut rng); // accumulated = 2.0 → Rotated
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_ne!(before, after,
-        "cooldown(ZERO) must never block: elapsed ≥ ZERO always passes the gate");
+    assert_ne!(
+        before, after,
+        "cooldown(ZERO) must never block: elapsed ≥ ZERO always passes the gate"
+    );
 }
 
 // ── §74. force_rotate() bypasses the cooldown gate ────────────────────────────
@@ -2655,17 +3184,26 @@ fn pool_cooldown_force_rotate_bypasses_gate() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_cooldown(Duration::MAX);
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
-    let mut before = pool.active_set_snapshot(); before.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
     pool.force_rotate(&mut rng);
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_ne!(before, after,
-        "force_rotate() must bypass cooldown gate and fire regardless of elapsed time");
+    assert_ne!(
+        before, after,
+        "force_rotate() must bypass cooldown gate and fire regardless of elapsed time"
+    );
 }
 
 // ── §75. Cooldown resets after force_rotate(), blocking next maybe_rotate() ──
@@ -2676,11 +3214,18 @@ fn pool_cooldown_resets_after_force_rotate() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 0.0 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 0.0,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_cooldown(Duration::MAX);
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // force_rotate() fires (bypasses gate), resetting last_rotation to now().
     pool.force_rotate(&mut rng);
@@ -2688,12 +3233,16 @@ fn pool_cooldown_resets_after_force_rotate() {
     // Immediately: maybe_rotate() — accumulated_kappa = 0, but even if it added κ=1.0,
     // the cooldown gate blocks: last_rotation was just reset → elapsed ≈ 0 < MAX.
     let _ = pool.sample(&mut rng);
-    let mut before = pool.active_set_snapshot(); before.sort();
+    let mut before = pool.active_set_snapshot();
+    before.sort();
     pool.maybe_rotate(&mut rng);
-    let mut after = pool.active_set_snapshot(); after.sort();
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_eq!(before, after,
-        "cooldown must reset after force_rotate(): next maybe_rotate() must be gated");
+    assert_eq!(
+        before, after,
+        "cooldown must reset after force_rotate(): next maybe_rotate() must be gated"
+    );
 }
 
 // ── §76. Absent cooldown preserves existing rotation behavior ─────────────────
@@ -2705,20 +3254,33 @@ fn pool_cooldown_absent_preserves_existing_behavior() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 1.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 1.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // 4 samples → Steady. Two calls: 1.0+1.0=2.0 > 1.5 → fires on second.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
-    let mut before = pool.active_set_snapshot(); before.sort();
-    pool.maybe_rotate(&mut rng);    // accumulated = 1.0 → PolicyThresholdNotMet
-    pool.maybe_rotate(&mut rng);    // accumulated = 2.0 → Rotated
-    let mut after = pool.active_set_snapshot(); after.sort();
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
+    let mut before = pool.active_set_snapshot();
+    before.sort();
+    pool.maybe_rotate(&mut rng); // accumulated = 1.0 → PolicyThresholdNotMet
+    pool.maybe_rotate(&mut rng); // accumulated = 2.0 → Rotated
+    let mut after = pool.active_set_snapshot();
+    after.sort();
 
-    assert_ne!(before, after,
-        "no cooldown configured: rotation must fire normally as before Phase 25");
+    assert_ne!(
+        before, after,
+        "no cooldown configured: rotation must fire normally as before Phase 25"
+    );
 }
 
 // ── §77. EntropyTriggered blocked in PostReset ────────────────────────────────
@@ -2731,20 +3293,33 @@ fn pool_entropy_triggered_blocked_in_post_reset() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_rotation(
-            PoolRotationPolicy::EntropyTriggered { min_entropy_bits: 3.0 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::EntropyTriggered {
+                min_entropy_bits: 3.0,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // 0 samples → PostReset (total_samples=0 < active_n=4).
     // entropy=0 bits < 3.0 would fire in Steady; T4 gate blocks it in PostReset.
     let outcome = pool.maybe_rotate(&mut rng);
 
-    assert_eq!(outcome, RotationOutcome::Deferred(DeferralReason::EstimatorNotConverged),
-        "EntropyTriggered must be blocked by T4 gate in PostReset");
-    assert_eq!(pool.epoch_count(), 0,
-        "no rotation must have occurred in PostReset");
+    assert_eq!(
+        outcome,
+        RotationOutcome::Deferred(DeferralReason::EstimatorNotConverged),
+        "EntropyTriggered must be blocked by T4 gate in PostReset"
+    );
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "no rotation must have occurred in PostReset"
+    );
 }
 
 // ── §78. QueryCount admissible in Reconverging ────────────────────────────────
@@ -2757,29 +3332,45 @@ fn pool_query_count_admissible_in_reconverging() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::QueryCount(2),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // force_rotate: resets tracker → total_samples=0 → PostReset.
     pool.force_rotate(&mut rng);
     let epoch_after_force = pool.epoch_count();
 
     // 4 samples brings total_samples to 4 = active_n → Reconverging.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // QueryCount(2): first call increments count to 1 → threshold not met.
     let outcome1 = pool.maybe_rotate(&mut rng);
-    assert_eq!(outcome1, RotationOutcome::Deferred(DeferralReason::PolicyThresholdNotMet),
-        "QueryCount(2) must not fire on the first call in Reconverging");
+    assert_eq!(
+        outcome1,
+        RotationOutcome::Deferred(DeferralReason::PolicyThresholdNotMet),
+        "QueryCount(2) must not fire on the first call in Reconverging"
+    );
 
     // Second call increments count to 2 → fires.
     let outcome2 = pool.maybe_rotate(&mut rng);
-    assert_eq!(outcome2, RotationOutcome::Rotated,
-        "QueryCount(2) must fire on the second call in Reconverging");
-    assert_eq!(pool.epoch_count(), epoch_after_force + 1,
-        "epoch_count must have incremented by exactly 1");
+    assert_eq!(
+        outcome2,
+        RotationOutcome::Rotated,
+        "QueryCount(2) must fire on the second call in Reconverging"
+    );
+    assert_eq!(
+        pool.epoch_count(),
+        epoch_after_force + 1,
+        "epoch_count must have incremented by exactly 1"
+    );
 }
 
 // ── §79. IntegralTriggered does not accumulate in PostReset ──────────────────
@@ -2792,11 +3383,18 @@ fn pool_integral_triggered_does_not_accumulate_in_post_reset() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 1.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 1.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // force_rotate: resets tracker → total_samples=0 → PostReset.
     pool.force_rotate(&mut rng);
@@ -2805,11 +3403,17 @@ fn pool_integral_triggered_does_not_accumulate_in_post_reset() {
     let outcomes: Vec<RotationOutcome> = (0..5).map(|_| pool.maybe_rotate(&mut rng)).collect();
 
     for (i, o) in outcomes.iter().enumerate() {
-        assert_eq!(*o, RotationOutcome::Deferred(DeferralReason::EstimatorNotConverged),
-            "call {i}: IntegralTriggered must be blocked in PostReset");
+        assert_eq!(
+            *o,
+            RotationOutcome::Deferred(DeferralReason::EstimatorNotConverged),
+            "call {i}: IntegralTriggered must be blocked in PostReset"
+        );
     }
-    assert_eq!(pool.convergence_pressure().accumulated_pressure, 0.0,
-        "accumulated_pressure must not have changed while in PostReset");
+    assert_eq!(
+        pool.convergence_pressure().accumulated_pressure,
+        0.0,
+        "accumulated_pressure must not have changed while in PostReset"
+    );
 }
 
 // ── §80. ConvergenceTriggered fires in Steady (positive control) ─────────────
@@ -2822,25 +3426,39 @@ fn pool_convergence_triggered_fires_in_steady() {
         .with_active_window(1)
         .with_rotation(
             PoolRotationPolicy::ConvergenceTriggered { max_kappa: 0.01 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
     pool.add([0u8; 32], SubstrateLedger::new());
     pool.add([1u8; 32], SubstrateLedger::new());
 
     // 4 × active_n = 4 × 1 = 4 samples → Steady.
-    for _ in 0..10 { let _ = pool.sample(&mut rng); }
+    for _ in 0..10 {
+        let _ = pool.sample(&mut rng);
+    }
 
     let cp = pool.convergence_pressure();
-    assert_eq!(cp.current_epoch_phase, EpochPhase::Steady,
-        "pool must be in Steady after 10 samples with active_n=1");
+    assert_eq!(
+        cp.current_epoch_phase,
+        EpochPhase::Steady,
+        "pool must be in Steady after 10 samples with active_n=1"
+    );
 
     let epoch_before = pool.epoch_count();
     let outcome = pool.maybe_rotate(&mut rng);
 
-    assert_eq!(outcome, RotationOutcome::Rotated,
-        "ConvergenceTriggered(0.01) must fire in Steady when κ=1.0");
-    assert_eq!(pool.epoch_count(), epoch_before + 1,
-        "epoch_count must have incremented after rotation");
+    assert_eq!(
+        outcome,
+        RotationOutcome::Rotated,
+        "ConvergenceTriggered(0.01) must fire in Steady when κ=1.0"
+    );
+    assert_eq!(
+        pool.epoch_count(),
+        epoch_before + 1,
+        "epoch_count must have incremented after rotation"
+    );
 }
 
 // ── §81. EstimatorNotConverged is distinct from PolicyThresholdNotMet ────────
@@ -2855,11 +3473,18 @@ fn pool_estimator_not_converged_distinct_from_policy_threshold_not_met() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool_a.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool_a.add([i; 32], SubstrateLedger::new());
+    }
     // 16 samples → total_samples=16 ≥ 4*active_n=16 → Steady.
-    for _ in 0..16 { let _ = pool_a.sample(&mut rng); }
+    for _ in 0..16 {
+        let _ = pool_a.sample(&mut rng);
+    }
     let outcome_a = pool_a.maybe_rotate(&mut rng);
 
     // Pool B: EntropyTriggered in PostReset → EstimatorNotConverged.
@@ -2867,20 +3492,35 @@ fn pool_estimator_not_converged_distinct_from_policy_threshold_not_met() {
     let mut pool_b = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_rotation(
-            PoolRotationPolicy::EntropyTriggered { min_entropy_bits: 3.0 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::EntropyTriggered {
+                min_entropy_bits: 3.0,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
-    for i in 0..8u8 { pool_b.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool_b.add([i; 32], SubstrateLedger::new());
+    }
     pool_b.force_rotate(&mut rng); // resets tracker → PostReset
     let outcome_b = pool_b.maybe_rotate(&mut rng);
 
-    assert_eq!(outcome_a, RotationOutcome::Deferred(DeferralReason::PolicyThresholdNotMet),
-        "Manual policy in Steady must produce PolicyThresholdNotMet");
-    assert_eq!(outcome_b, RotationOutcome::Deferred(DeferralReason::EstimatorNotConverged),
-        "EntropyTriggered in PostReset must produce EstimatorNotConverged");
-    assert_ne!(outcome_a, outcome_b,
-        "the two deferral reasons must be distinguishable");
+    assert_eq!(
+        outcome_a,
+        RotationOutcome::Deferred(DeferralReason::PolicyThresholdNotMet),
+        "Manual policy in Steady must produce PolicyThresholdNotMet"
+    );
+    assert_eq!(
+        outcome_b,
+        RotationOutcome::Deferred(DeferralReason::EstimatorNotConverged),
+        "EntropyTriggered in PostReset must produce EstimatorNotConverged"
+    );
+    assert_ne!(
+        outcome_a, outcome_b,
+        "the two deferral reasons must be distinguishable"
+    );
 }
 
 // Phase 32 invariants (Sprint B — IntegralTriggered builder safety):
@@ -2893,20 +3533,31 @@ fn pool_estimator_not_converged_distinct_from_policy_threshold_not_met() {
 // ── §82. IntegralTriggered(< 1.0) without cooldown panics ───────────────────────
 
 #[test]
-#[should_panic(expected = "IntegralTriggered with max_accumulated_pressure < 1.0 requires a \
-                            non-zero cooldown to prevent rotation loops")]
+#[should_panic(
+    expected = "IntegralTriggered with max_accumulated_pressure < 1.0 requires a \
+                            non-zero cooldown to prevent rotation loops"
+)]
 fn pool_integral_triggered_low_threshold_without_cooldown_panics() {
     let mut rng = OsRng;
     // active_window=4, threshold=0.5 < 1.0, no cooldown → safety assert fires.
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 0.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 0.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
     // 16 samples → Steady. Safety assert fires before any gate: should_panic.
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
     pool.maybe_rotate(&mut rng);
 }
 
@@ -2920,17 +3571,29 @@ fn pool_integral_triggered_low_threshold_with_cooldown_ok() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(1)
         .with_rotation(
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure: 0.5 },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure: 0.5,
+            },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_cooldown(Duration::from_secs(60));
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
     // 4 samples → Steady. Safety check passes (non-zero cooldown). Cooldown gate blocks
     // (elapsed < 60s) → Deferred(Cooldown), not a panic.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
     let outcome = pool.maybe_rotate(&mut rng);
-    assert_eq!(outcome, RotationOutcome::Deferred(DeferralReason::Cooldown),
-        "non-zero cooldown: safety check must pass and cooldown gate must block");
+    assert_eq!(
+        outcome,
+        RotationOutcome::Deferred(DeferralReason::Cooldown),
+        "non-zero cooldown: safety check must pass and cooldown gate must block"
+    );
 }
 
 // Phase 33 invariants (Sprint E — Dormant Floor Enforcement):
@@ -2947,19 +3610,32 @@ fn pool_dormant_floor_gate_blocks_when_below_threshold() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::QueryCount(1),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..5u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..5u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
     let epoch_before = pool.epoch_count();
 
     // 4 samples → total_samples=4 ≥ active_n=4 → Reconverging (QueryCount is admissible).
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
     let outcome = pool.maybe_rotate(&mut rng);
 
-    assert_eq!(outcome, RotationOutcome::Deferred(DeferralReason::DormantBelowFloor),
-        "dormant.len()=1 < active_window=4: floor gate must block rotation");
-    assert_eq!(pool.epoch_count(), epoch_before,
-        "epoch_count must be unchanged when floor gate defers");
+    assert_eq!(
+        outcome,
+        RotationOutcome::Deferred(DeferralReason::DormantBelowFloor),
+        "dormant.len()=1 < active_window=4: floor gate must block rotation"
+    );
+    assert_eq!(
+        pool.epoch_count(),
+        epoch_before,
+        "epoch_count must be unchanged when floor gate defers"
+    );
 }
 
 // ── §85. Floor gate passes when dormant >= active_window ─────────────────────────
@@ -2972,20 +3648,33 @@ fn pool_dormant_floor_gate_passes_when_at_threshold() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::QueryCount(1),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
     let epoch_before = pool.epoch_count();
 
     // 4 samples → Reconverging. QueryCount(1) is admissible. dormant.len()=4 == active_window=4
     // → floor gate passes → QueryCount fires on first call.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
     let outcome = pool.maybe_rotate(&mut rng);
 
-    assert_eq!(outcome, RotationOutcome::Rotated,
-        "dormant.len()=4 == active_window=4: floor gate must pass, rotation must fire");
-    assert_eq!(pool.epoch_count(), epoch_before + 1,
-        "epoch_count must increment by 1 on successful rotation");
+    assert_eq!(
+        outcome,
+        RotationOutcome::Rotated,
+        "dormant.len()=4 == active_window=4: floor gate must pass, rotation must fire"
+    );
+    assert_eq!(
+        pool.epoch_count(),
+        epoch_before + 1,
+        "epoch_count must increment by 1 on successful rotation"
+    );
 }
 
 // Phase 34 invariants (Phase Opacity — Observer-State Concealment):
@@ -3006,17 +3695,27 @@ fn pool_tick_returns_true_on_rotation() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::QueryCount(1),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
     let epoch_before = pool.epoch_count();
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
 
     let rotated = pool.tick(&mut rng);
 
     assert!(rotated, "tick() must return true when a rotation fires");
-    assert_eq!(pool.epoch_count(), epoch_before + 1,
-        "epoch_count must increment by 1 on a rotation");
+    assert_eq!(
+        pool.epoch_count(),
+        epoch_before + 1,
+        "epoch_count must increment by 1 on a rotation"
+    );
 }
 
 // ── §87. tick() returns false when rotation defers ───────────────────────────
@@ -3029,27 +3728,46 @@ fn pool_tick_returns_false_on_all_deferrals() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
     let epoch_before = pool.epoch_count();
 
     let rotated = pool.tick(&mut rng);
 
-    assert!(!rotated, "tick() must return false for Manual policy (never rotates)");
-    assert_eq!(pool.epoch_count(), epoch_before,
-        "epoch_count must be unchanged when rotation defers");
+    assert!(
+        !rotated,
+        "tick() must return false for Manual policy (never rotates)"
+    );
+    assert_eq!(
+        pool.epoch_count(),
+        epoch_before,
+        "epoch_count must be unchanged when rotation defers"
+    );
 
     // Also verify: DormantEmpty → false. active_window=usize::MAX puts all providers active.
-    let mut pool2 = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_rotation(
-            PoolRotationPolicy::QueryCount(1),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
-        );
-    for i in 0..4u8 { pool2.add([i; 32], SubstrateLedger::new()); }
-    assert!(!pool2.tick(&mut rng),
-        "tick() must return false when dormant is empty (DormantEmpty)");
+    let mut pool2 = ProviderPool::new(SamplingStrategy::RandomK(1)).with_rotation(
+        PoolRotationPolicy::QueryCount(1),
+        ChurnBudget {
+            min_churn: 1,
+            max_churn: 1,
+        },
+    );
+    for i in 0..4u8 {
+        pool2.add([i; 32], SubstrateLedger::new());
+    }
+    assert!(
+        !pool2.tick(&mut rng),
+        "tick() must return false when dormant is empty (DormantEmpty)"
+    );
 }
 
 // ── §88. tick() with zero jitter proceeds immediately ────────────────────────
@@ -3062,14 +3780,24 @@ fn pool_tick_zero_jitter_matches_maybe_rotate() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::QueryCount(1),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
 
     let rotated = pool.tick(&mut rng);
 
-    assert!(rotated, "zero-jitter tick() must rotate just like maybe_rotate() would");
+    assert!(
+        rotated,
+        "zero-jitter tick() must rotate just like maybe_rotate() would"
+    );
 }
 
 // ── §89. tick() jitter gate suppresses immediate second call ─────────────────
@@ -3083,22 +3811,32 @@ fn pool_tick_jitter_gate_suppresses_immediate_second_call() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::QueryCount(1),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_tick_jitter(Duration::from_millis(500));
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
 
-    let _first = pool.tick(&mut rng);  // Live: deadline was in the past; redraws deadline.
-    let second = pool.tick(&mut rng);  // Immediate: deadline now up to 500ms in the future.
+    let _first = pool.tick(&mut rng); // Live: deadline was in the past; redraws deadline.
+    let second = pool.tick(&mut rng); // Immediate: deadline now up to 500ms in the future.
 
-    assert!(!second, "immediate second tick() must be suppressed by jitter gate");
+    assert!(
+        !second,
+        "immediate second tick() must be suppressed by jitter gate"
+    );
 }
 
 // ── §90. tick() does not panic in PostReset (convergence_pressure baseline) ──
 
 #[test]
-fn pool_tick_postReset_baseline_does_not_panic() {
+fn pool_tick_post_reset_baseline_does_not_panic() {
     let mut rng = OsRng;
     // 0 samples → PostReset. convergence_pressure() must not panic with empty estimator.
     // Manual policy → never rotates. tick() returns false.
@@ -3106,13 +3844,21 @@ fn pool_tick_postReset_baseline_does_not_panic() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     let result = pool.tick(&mut rng);
 
-    assert!(!result, "tick() in PostReset with Manual policy must return false");
+    assert!(
+        !result,
+        "tick() in PostReset with Manual policy must return false"
+    );
 }
 
 // ── §91. tick() constant-work baseline does not corrupt state ─────────────────
@@ -3126,17 +3872,27 @@ fn pool_tick_steady_constant_work_correctness() {
         .with_active_window(4)
         .with_rotation(
             PoolRotationPolicy::QueryCount(1),
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
     let epoch_before = pool.epoch_count();
 
     let rotated = pool.tick(&mut rng);
 
     assert!(rotated, "tick() in Steady with QueryCount(1) must rotate");
-    assert_eq!(pool.epoch_count(), epoch_before + 1,
-        "pressure baseline must not corrupt epoch state");
+    assert_eq!(
+        pool.epoch_count(),
+        epoch_before + 1,
+        "pressure baseline must not corrupt epoch state"
+    );
 }
 
 // ── §92. Diagnostic counts correct after construction ────────────────────────
@@ -3144,21 +3900,41 @@ fn pool_tick_steady_constant_work_correctness() {
 #[test]
 fn pool_diagnostic_counts_correct_after_construction() {
     let make_pool = |active_window: usize, n_providers: u8| {
-        let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-            .with_active_window(active_window);
-        for i in 0..n_providers { pool.add([i; 32], SubstrateLedger::new()); }
+        let mut pool =
+            ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(active_window);
+        for i in 0..n_providers {
+            pool.add([i; 32], SubstrateLedger::new());
+        }
         pool
     };
 
     let windowed = make_pool(4, 8);
-    assert_eq!(windowed.active_count(), 4, "active_count must equal active_window");
-    assert_eq!(windowed.dormant_count(), 4, "dormant_count must be total - active");
+    assert_eq!(
+        windowed.active_count(),
+        4,
+        "active_count must equal active_window"
+    );
+    assert_eq!(
+        windowed.dormant_count(),
+        4,
+        "dormant_count must be total - active"
+    );
 
     // Default active_window=usize::MAX: all providers go active.
     let mut full = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 0..4u8 { full.add([i; 32], SubstrateLedger::new()); }
-    assert_eq!(full.active_count(), 4, "default window: all providers are active");
-    assert_eq!(full.dormant_count(), 0, "default window: dormant pool is empty");
+    for i in 0..4u8 {
+        full.add([i; 32], SubstrateLedger::new());
+    }
+    assert_eq!(
+        full.active_count(),
+        4,
+        "default window: all providers are active"
+    );
+    assert_eq!(
+        full.dormant_count(),
+        0,
+        "default window: dormant pool is empty"
+    );
 }
 
 // ── §93. Diagnostic kappa is finite and in [0.0, 1.0] ───────────────────────
@@ -3166,22 +3942,32 @@ fn pool_diagnostic_counts_correct_after_construction() {
 #[test]
 fn pool_diagnostic_kappa_in_range() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // PostReset: 0 samples. κ = 1.0 by definition when estimator has no data.
     let kappa_post_reset = pool.kappa();
-    assert!(kappa_post_reset.is_finite(), "kappa must be finite in PostReset");
-    assert!((0.0..=1.0).contains(&kappa_post_reset),
-        "kappa must be in [0.0, 1.0] in PostReset; got {kappa_post_reset}");
+    assert!(
+        kappa_post_reset.is_finite(),
+        "kappa must be finite in PostReset"
+    );
+    assert!(
+        (0.0..=1.0).contains(&kappa_post_reset),
+        "kappa must be in [0.0, 1.0] in PostReset; got {kappa_post_reset}"
+    );
 
     // Steady: 16 samples. κ is well-defined.
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
     let kappa_steady = pool.kappa();
     assert!(kappa_steady.is_finite(), "kappa must be finite in Steady");
-    assert!((0.0..=1.0).contains(&kappa_steady),
-        "kappa must be in [0.0, 1.0] in Steady; got {kappa_steady}");
+    assert!(
+        (0.0..=1.0).contains(&kappa_steady),
+        "kappa must be in [0.0, 1.0] in Steady; got {kappa_steady}"
+    );
 }
 
 // ── §94. BurstTriggered fires when threshold always met (threshold=-2.0) ─────
@@ -3196,11 +3982,18 @@ fn pool_burst_triggered_fires_when_threshold_always_met() {
                 min_burst_magnitude: -2.0,
                 response_jitter_max: Duration::ZERO,
             },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
     // Drive to Steady (≥ 4*active_n = 16 samples).
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // burst = kappa - smoothed_kappa ≥ -1.0 > -2.0: threshold always satisfied.
     let before = pool.epoch_count();
@@ -3221,15 +4014,25 @@ fn pool_burst_triggered_defers_when_threshold_never_met() {
                 min_burst_magnitude: 2.0,
                 response_jitter_max: Duration::ZERO,
             },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // burst ≤ 1.0 < 2.0: threshold never satisfied.
     let before = pool.epoch_count();
     let outcome = pool.maybe_rotate(&mut rng);
-    assert_eq!(outcome, RotationOutcome::Deferred(DeferralReason::PolicyThresholdNotMet));
+    assert_eq!(
+        outcome,
+        RotationOutcome::Deferred(DeferralReason::PolicyThresholdNotMet)
+    );
     assert_eq!(pool.epoch_count(), before);
 }
 
@@ -3245,10 +4048,17 @@ fn pool_burst_triggered_response_jitter_defers_first_detection() {
                 min_burst_magnitude: -2.0,
                 response_jitter_max: Duration::from_millis(500),
             },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // First call: burst detected; jitter > 0 so deadline is set; deferred.
     let before = pool.epoch_count();
@@ -3280,9 +4090,14 @@ fn pool_burst_triggered_blocked_by_t4_outside_steady() {
                 min_burst_magnitude: -2.0,
                 response_jitter_max: Duration::ZERO,
             },
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         );
-    for i in 0..8u8 { pool.add([i; 32], SubstrateLedger::new()); }
+    for i in 0..8u8 {
+        pool.add([i; 32], SubstrateLedger::new());
+    }
 
     // PostReset: 0 samples → EstimatorNotConverged.
     assert_eq!(
@@ -3292,7 +4107,9 @@ fn pool_burst_triggered_blocked_by_t4_outside_steady() {
     );
 
     // Reconverging: 4 samples (≥ active_n but < 4*active_n=16) → EstimatorNotConverged.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
     assert_eq!(
         pool.maybe_rotate(&mut rng),
         RotationOutcome::Deferred(DeferralReason::EstimatorNotConverged),
@@ -3300,7 +4117,9 @@ fn pool_burst_triggered_blocked_by_t4_outside_steady() {
     );
 
     // Steady: 16 samples → Rotated (threshold always met with -2.0).
-    for _ in 0..12 { let _ = pool.sample(&mut rng); }
+    for _ in 0..12 {
+        let _ = pool.sample(&mut rng);
+    }
     assert_eq!(
         pool.maybe_rotate(&mut rng),
         RotationOutcome::Rotated,
@@ -3317,14 +4136,18 @@ fn pool_admission_request_returns_challenge() {
         .with_admission(AdmissionConfig {
             max_admits_per_window: 5,
             window_duration: std::time::Duration::from_secs(300),
-            challenge_ttl:   std::time::Duration::from_secs(60),
+            challenge_ttl: std::time::Duration::from_secs(60),
         });
 
-    let challenge = pool.request_admission(kp.public).expect("first request must succeed");
+    let challenge = pool
+        .request_admission(kp.public)
+        .expect("first request must succeed");
     assert_eq!(challenge.len(), 32, "challenge must be 32 bytes");
 
     // Second call for the same ID while a challenge is pending → PendingChallenge.
-    let err = pool.request_admission(kp.public).expect_err("duplicate request must fail");
+    let err = pool
+        .request_admission(kp.public)
+        .expect_err("duplicate request must fail");
     assert_eq!(err, AdmissionError::PendingChallenge);
 }
 
@@ -3338,7 +4161,7 @@ fn pool_admission_complete_with_valid_signature() {
         .with_admission(AdmissionConfig {
             max_admits_per_window: 5,
             window_duration: std::time::Duration::from_secs(300),
-            challenge_ttl:   std::time::Duration::from_secs(60),
+            challenge_ttl: std::time::Duration::from_secs(60),
         });
 
     let challenge = pool.request_admission(kp.public).unwrap();
@@ -3347,8 +4170,11 @@ fn pool_admission_complete_with_valid_signature() {
     pool.complete_admission(kp.public, &sig, SubstrateLedger::new())
         .expect("valid signature must be accepted");
 
-    assert_eq!(pool.active_count() + pool.dormant_count(), 1,
-        "admitted provider must appear in pool");
+    assert_eq!(
+        pool.active_count() + pool.dormant_count(),
+        1,
+        "admitted provider must appear in pool"
+    );
 }
 
 // ── §100. Invalid signature is rejected; pending challenge is preserved ───────
@@ -3356,23 +4182,29 @@ fn pool_admission_complete_with_valid_signature() {
 #[test]
 fn pool_admission_invalid_signature_rejected() {
     let kp = KeyPair::generate();
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_admission(AdmissionConfig {
+    let mut pool =
+        ProviderPool::new(SamplingStrategy::RandomK(1)).with_admission(AdmissionConfig {
             max_admits_per_window: 5,
             window_duration: std::time::Duration::from_secs(300),
-            challenge_ttl:   std::time::Duration::from_secs(60),
+            challenge_ttl: std::time::Duration::from_secs(60),
         });
 
     pool.request_admission(kp.public).unwrap();
     let bad_sig = [0u8; 64];
-    let err = pool.complete_admission(kp.public, &bad_sig, SubstrateLedger::new())
+    let err = pool
+        .complete_admission(kp.public, &bad_sig, SubstrateLedger::new())
         .expect_err("invalid signature must be rejected");
     assert_eq!(err, AdmissionError::SignatureInvalid);
-    assert_eq!(pool.active_count() + pool.dormant_count(), 0,
-        "provider must not be in pool after failed verification");
+    assert_eq!(
+        pool.active_count() + pool.dormant_count(),
+        0,
+        "provider must not be in pool after failed verification"
+    );
 
     // Pending challenge is preserved — the caller may retry with the correct signature.
-    let err2 = pool.request_admission(kp.public).expect_err("challenge still pending");
+    let err2 = pool
+        .request_admission(kp.public)
+        .expect_err("challenge still pending");
     assert_eq!(err2, AdmissionError::PendingChallenge);
 }
 
@@ -3381,11 +4213,11 @@ fn pool_admission_invalid_signature_rejected() {
 #[test]
 fn pool_admission_challenge_expired() {
     let kp = KeyPair::generate();
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_admission(AdmissionConfig {
+    let mut pool =
+        ProviderPool::new(SamplingStrategy::RandomK(1)).with_admission(AdmissionConfig {
             max_admits_per_window: 5,
             window_duration: std::time::Duration::from_secs(300),
-            challenge_ttl:   std::time::Duration::ZERO, // expires immediately
+            challenge_ttl: std::time::Duration::ZERO, // expires immediately
         });
 
     let challenge = pool.request_admission(kp.public).unwrap();
@@ -3393,7 +4225,8 @@ fn pool_admission_challenge_expired() {
     let sig = kp.sign(&msg);
 
     // elapsed() >= Duration::ZERO is always true — any call sees the challenge as expired.
-    let err = pool.complete_admission(kp.public, &sig, SubstrateLedger::new())
+    let err = pool
+        .complete_admission(kp.public, &sig, SubstrateLedger::new())
         .expect_err("expired challenge must be rejected");
     assert_eq!(err, AdmissionError::ChallengeExpired);
     assert_eq!(pool.active_count() + pool.dormant_count(), 0);
@@ -3410,12 +4243,16 @@ fn pool_admission_budget_exhaustion() {
         .with_admission(AdmissionConfig {
             max_admits_per_window: 2,
             window_duration: std::time::Duration::from_secs(300),
-            challenge_ttl:   std::time::Duration::from_secs(60),
+            challenge_ttl: std::time::Duration::from_secs(60),
         });
 
-    pool.request_admission(kp1.public).expect("first request within budget");
-    pool.request_admission(kp2.public).expect("second request within budget");
-    let err = pool.request_admission(kp3.public).expect_err("third request exceeds budget");
+    pool.request_admission(kp1.public)
+        .expect("first request within budget");
+    pool.request_admission(kp2.public)
+        .expect("second request within budget");
+    let err = pool
+        .request_admission(kp3.public)
+        .expect_err("third request exceeds budget");
     assert_eq!(err, AdmissionError::BudgetExhausted);
 }
 
@@ -3429,17 +4266,20 @@ fn pool_admission_duplicate_rejected() {
         .with_admission(AdmissionConfig {
             max_admits_per_window: 10,
             window_duration: std::time::Duration::from_secs(300),
-            challenge_ttl:   std::time::Duration::from_secs(60),
+            challenge_ttl: std::time::Duration::from_secs(60),
         });
 
     // Full admit cycle — provider enters the pool.
     let challenge = pool.request_admission(kp.public).unwrap();
     let sig = kp.sign(&admission_challenge_message(&kp.public, &challenge));
-    pool.complete_admission(kp.public, &sig, SubstrateLedger::new()).unwrap();
+    pool.complete_admission(kp.public, &sig, SubstrateLedger::new())
+        .unwrap();
     assert_eq!(pool.active_count() + pool.dormant_count(), 1);
 
     // Requesting admission for an already-pooled ID returns AlreadyInPool.
-    let err = pool.request_admission(kp.public).expect_err("duplicate must fail");
+    let err = pool
+        .request_admission(kp.public)
+        .expect_err("duplicate must fail");
     assert_eq!(err, AdmissionError::AlreadyInPool);
 }
 
@@ -3448,11 +4288,11 @@ fn pool_admission_duplicate_rejected() {
 #[test]
 #[should_panic(expected = "ProviderPool has admission configured; use complete_admission()")]
 fn pool_admission_add_panics_when_configured() {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_admission(AdmissionConfig {
+    let mut pool =
+        ProviderPool::new(SamplingStrategy::RandomK(1)).with_admission(AdmissionConfig {
             max_admits_per_window: 5,
             window_duration: std::time::Duration::from_secs(300),
-            challenge_ttl:   std::time::Duration::from_secs(60),
+            challenge_ttl: std::time::Duration::from_secs(60),
         });
     pool.add([0u8; 32], SubstrateLedger::new()); // must panic
 }
@@ -3468,17 +4308,21 @@ fn pool_admission_budget_resets_after_window() {
         .with_admission(AdmissionConfig {
             max_admits_per_window: 1,
             window_duration: std::time::Duration::from_millis(20),
-            challenge_ttl:   std::time::Duration::from_secs(60),
+            challenge_ttl: std::time::Duration::from_secs(60),
         });
 
     // Use up the single-admit budget.
-    pool.request_admission(kp1.public).expect("first request within budget");
-    let err = pool.request_admission(kp2.public).expect_err("budget exhausted");
+    pool.request_admission(kp1.public)
+        .expect("first request within budget");
+    let err = pool
+        .request_admission(kp2.public)
+        .expect_err("budget exhausted");
     assert_eq!(err, AdmissionError::BudgetExhausted);
 
     // After the window expires, the budget resets.
     std::thread::sleep(std::time::Duration::from_millis(25));
-    pool.request_admission(kp3.public).expect("budget must reset after window");
+    pool.request_admission(kp3.public)
+        .expect("budget must reset after window");
 }
 
 // ── §106. liveness_weighted_kappa ≈ kappa when all active providers respond ────
@@ -3490,8 +4334,7 @@ fn pool_admission_budget_resets_after_window() {
 #[test]
 fn pool_liveness_kappa_equals_kappa_when_all_providers_respond() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4 {
         pool.add(pid(i), SubstrateLedger::new());
     }
@@ -3524,8 +4367,7 @@ fn pool_liveness_kappa_equals_kappa_when_all_providers_respond() {
 #[test]
 fn pool_liveness_kappa_rises_when_provider_goes_silent() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4 {
         pool.add(pid(i), SubstrateLedger::new());
     }
@@ -3544,7 +4386,8 @@ fn pool_liveness_kappa_rises_when_provider_goes_silent() {
     assert!(
         p.liveness_weighted_kappa > p.kappa,
         "liveness_weighted_kappa ({:.4}) must exceed kappa ({:.4}) when a provider is silent",
-        p.liveness_weighted_kappa, p.kappa,
+        p.liveness_weighted_kappa,
+        p.kappa,
     );
 }
 
@@ -3556,8 +4399,7 @@ fn pool_liveness_kappa_rises_when_provider_goes_silent() {
 #[test]
 fn pool_liveness_kappa_is_one_before_any_responses() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4 {
         pool.add(pid(i), SubstrateLedger::new());
     }
@@ -3577,8 +4419,7 @@ fn pool_liveness_kappa_is_one_before_any_responses() {
 #[test]
 fn pool_response_entropy_is_zero_before_any_responses() {
     let mut rng = OsRng;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_active_window(4);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_active_window(4);
     for i in 0..4 {
         pool.add(pid(i), SubstrateLedger::new());
     }
@@ -3587,10 +4428,14 @@ fn pool_response_entropy_is_zero_before_any_responses() {
     }
 
     let est = pool.exposure_estimate();
-    assert_eq!(est.response_entropy_bits, 0.0,
-        "response_entropy_bits must be 0.0 before any record_response() calls");
-    assert_eq!(est.response_total_samples, 0,
-        "response_total_samples must be 0 before any record_response() calls");
+    assert_eq!(
+        est.response_entropy_bits, 0.0,
+        "response_entropy_bits must be 0.0 before any record_response() calls"
+    );
+    assert_eq!(
+        est.response_total_samples, 0,
+        "response_total_samples must be 0 before any record_response() calls"
+    );
 }
 
 // ── §110. smoothed_response_entropy_bits is preserved across rotation reset ──────
@@ -3606,7 +4451,10 @@ fn pool_response_smoothed_entropy_preserved_across_reset() {
         .with_active_window(1)
         .with_rotation(
             PoolRotationPolicy::Manual,
-            ChurnBudget { min_churn: 1, max_churn: 1 },
+            ChurnBudget {
+                min_churn: 1,
+                max_churn: 1,
+            },
         )
         .with_exposure_reset();
     pool.add(pid(0), SubstrateLedger::new());
@@ -3628,8 +4476,10 @@ fn pool_response_smoothed_entropy_preserved_across_reset() {
     pool.force_rotate(&mut rng);
 
     let est = pool.exposure_estimate();
-    assert_eq!(est.response_total_samples, 0,
-        "rotation with reset must clear response_total_samples");
+    assert_eq!(
+        est.response_total_samples, 0,
+        "rotation with reset must clear response_total_samples"
+    );
     assert!(
         est.smoothed_response_entropy_bits > 0.0,
         "rotation must preserve smoothed_response_entropy_bits (anti-thrashing)",
@@ -3646,15 +4496,18 @@ fn pool_evict_removes_provider_from_active() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(2)
         .with_eviction(EvictionConfig {
-            liveness_cooldown_secs:     300,
+            liveness_cooldown_secs: 300,
             equivocation_cooldown_secs: 3600,
-            max_re_admissions:          3,
+            max_re_admissions: 3,
         });
     // pid(0), pid(1) → active; pid(2) → dormant
-    for i in 0..3 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 0..3 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
     assert_eq!(pool.active_len(), 2);
 
-    pool.evict(&pid(0), EvictionReason::LivenessExhausted).unwrap();
+    pool.evict(&pid(0), EvictionReason::LivenessExhausted)
+        .unwrap();
 
     assert_eq!(pool.active_len(), 1, "active_len must drop after eviction");
     assert_eq!(pool.len(), 2, "total universe drops by 1");
@@ -3674,18 +4527,29 @@ fn pool_evict_removes_provider_from_dormant() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(2)
         .with_eviction(EvictionConfig {
-            liveness_cooldown_secs:     300,
+            liveness_cooldown_secs: 300,
             equivocation_cooldown_secs: 3600,
-            max_re_admissions:          3,
+            max_re_admissions: 3,
         });
     // pid(0..1) → active; pid(2..4) → dormant (3 dormant, floor needs ≥ 2 after removal)
-    for i in 0..5 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 0..5 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
     assert_eq!(pool.active_len(), 2);
-    assert_eq!(pool.len() - pool.active_len(), 3, "pre-condition: 3 dormant");
+    assert_eq!(
+        pool.len() - pool.active_len(),
+        3,
+        "pre-condition: 3 dormant"
+    );
 
-    pool.evict(&pid(4), EvictionReason::LivenessExhausted).unwrap();
+    pool.evict(&pid(4), EvictionReason::LivenessExhausted)
+        .unwrap();
 
-    assert_eq!(pool.len() - pool.active_len(), 2, "dormant count drops after eviction");
+    assert_eq!(
+        pool.len() - pool.active_len(),
+        2,
+        "dormant count drops after eviction"
+    );
     assert_eq!(pool.len(), 4, "total universe drops by 1");
 }
 
@@ -3703,20 +4567,22 @@ fn pool_evicted_provider_blocked_during_cooldown() {
         .with_active_window(4)
         .with_admission(AdmissionConfig {
             max_admits_per_window: 5,
-            window_duration:       Duration::from_secs(60),
-            challenge_ttl:         Duration::from_secs(60),
+            window_duration: Duration::from_secs(60),
+            challenge_ttl: Duration::from_secs(60),
         })
         .with_eviction(EvictionConfig {
-            liveness_cooldown_secs:     9999,
+            liveness_cooldown_secs: 9999,
             equivocation_cooldown_secs: 3600,
-            max_re_admissions:          3,
+            max_re_admissions: 3,
         });
 
     let challenge = pool.request_admission(provider_id).unwrap();
     let sig = kp.sign(&admission_challenge_message(&provider_id, &challenge));
-    pool.complete_admission(provider_id, &sig, SubstrateLedger::new()).unwrap();
+    pool.complete_admission(provider_id, &sig, SubstrateLedger::new())
+        .unwrap();
 
-    pool.evict(&provider_id, EvictionReason::LivenessExhausted).unwrap();
+    pool.evict(&provider_id, EvictionReason::LivenessExhausted)
+        .unwrap();
 
     let err = pool.request_admission(provider_id).unwrap_err();
     assert!(
@@ -3739,25 +4605,29 @@ fn pool_evicted_provider_can_readmit_after_cooldown() {
         .with_active_window(4)
         .with_admission(AdmissionConfig {
             max_admits_per_window: 5,
-            window_duration:       Duration::from_secs(60),
-            challenge_ttl:         Duration::from_secs(60),
+            window_duration: Duration::from_secs(60),
+            challenge_ttl: Duration::from_secs(60),
         })
         .with_eviction(EvictionConfig {
-            liveness_cooldown_secs:     0,
+            liveness_cooldown_secs: 0,
             equivocation_cooldown_secs: 0,
-            max_re_admissions:          3,
+            max_re_admissions: 3,
         });
 
     let c = pool.request_admission(provider_id).unwrap();
     let sig = kp.sign(&admission_challenge_message(&provider_id, &c));
-    pool.complete_admission(provider_id, &sig, SubstrateLedger::new()).unwrap();
+    pool.complete_admission(provider_id, &sig, SubstrateLedger::new())
+        .unwrap();
 
-    pool.evict(&provider_id, EvictionReason::LivenessExhausted).unwrap();
+    pool.evict(&provider_id, EvictionReason::LivenessExhausted)
+        .unwrap();
 
-    let c2 = pool.request_admission(provider_id)
+    let c2 = pool
+        .request_admission(provider_id)
         .expect("re-admission must succeed after zero cooldown");
     let sig2 = kp.sign(&admission_challenge_message(&provider_id, &c2));
-    pool.complete_admission(provider_id, &sig2, SubstrateLedger::new()).unwrap();
+    pool.complete_admission(provider_id, &sig2, SubstrateLedger::new())
+        .unwrap();
 
     assert!(
         pool.active_set_snapshot().contains(&provider_id),
@@ -3779,20 +4649,22 @@ fn pool_operator_ban_is_permanent() {
         .with_active_window(4)
         .with_admission(AdmissionConfig {
             max_admits_per_window: 5,
-            window_duration:       Duration::from_secs(60),
-            challenge_ttl:         Duration::from_secs(60),
+            window_duration: Duration::from_secs(60),
+            challenge_ttl: Duration::from_secs(60),
         })
         .with_eviction(EvictionConfig {
-            liveness_cooldown_secs:     0,
+            liveness_cooldown_secs: 0,
             equivocation_cooldown_secs: 0,
-            max_re_admissions:          99,
+            max_re_admissions: 99,
         });
 
     let c = pool.request_admission(provider_id).unwrap();
     let sig = kp.sign(&admission_challenge_message(&provider_id, &c));
-    pool.complete_admission(provider_id, &sig, SubstrateLedger::new()).unwrap();
+    pool.complete_admission(provider_id, &sig, SubstrateLedger::new())
+        .unwrap();
 
-    pool.evict(&provider_id, EvictionReason::OperatorBan).unwrap();
+    pool.evict(&provider_id, EvictionReason::OperatorBan)
+        .unwrap();
 
     // Zero cooldown, high re-admission limit — still permanently banned.
     let err = pool.request_admission(provider_id).unwrap_err();
@@ -3800,13 +4672,18 @@ fn pool_operator_ban_is_permanent() {
 
     // Lift the ban.
     let lifted = pool.lift_eviction_ban(&provider_id);
-    assert!(lifted, "lift_eviction_ban must return true when a ban record exists");
+    assert!(
+        lifted,
+        "lift_eviction_ban must return true when a ban record exists"
+    );
 
     // Now re-admission is permitted.
-    let c2 = pool.request_admission(provider_id)
+    let c2 = pool
+        .request_admission(provider_id)
         .expect("admission must succeed after ban lifted");
     let sig2 = kp.sign(&admission_challenge_message(&provider_id, &c2));
-    pool.complete_admission(provider_id, &sig2, SubstrateLedger::new()).unwrap();
+    pool.complete_admission(provider_id, &sig2, SubstrateLedger::new())
+        .unwrap();
     assert!(pool.active_set_snapshot().contains(&provider_id));
 }
 
@@ -3824,13 +4701,13 @@ fn pool_max_readmissions_blocks_after_limit() {
         .with_active_window(4)
         .with_admission(AdmissionConfig {
             max_admits_per_window: 20,
-            window_duration:       Duration::from_secs(60),
-            challenge_ttl:         Duration::from_secs(60),
+            window_duration: Duration::from_secs(60),
+            challenge_ttl: Duration::from_secs(60),
         })
         .with_eviction(EvictionConfig {
-            liveness_cooldown_secs:     0,
+            liveness_cooldown_secs: 0,
             equivocation_cooldown_secs: 0,
-            max_re_admissions:          2,
+            max_re_admissions: 2,
         });
 
     // Helper: admit provider (inline to avoid borrow issues)
@@ -3838,7 +4715,8 @@ fn pool_max_readmissions_blocks_after_limit() {
         () => {{
             let c = pool.request_admission(provider_id).unwrap();
             let sig = kp.sign(&admission_challenge_message(&provider_id, &c));
-            pool.complete_admission(provider_id, &sig, SubstrateLedger::new()).unwrap();
+            pool.complete_admission(provider_id, &sig, SubstrateLedger::new())
+                .unwrap();
         }};
     }
 
@@ -3846,15 +4724,18 @@ fn pool_max_readmissions_blocks_after_limit() {
     admit!();
 
     // Cycle 1: evict → re-admit (re_admission_count: 0 → 1)
-    pool.evict(&provider_id, EvictionReason::LivenessExhausted).unwrap();
+    pool.evict(&provider_id, EvictionReason::LivenessExhausted)
+        .unwrap();
     admit!();
 
     // Cycle 2: evict → re-admit (re_admission_count: 1 → 2)
-    pool.evict(&provider_id, EvictionReason::LivenessExhausted).unwrap();
+    pool.evict(&provider_id, EvictionReason::LivenessExhausted)
+        .unwrap();
     admit!();
 
     // Cycle 3: evict → attempt re-admission → blocked
-    pool.evict(&provider_id, EvictionReason::LivenessExhausted).unwrap();
+    pool.evict(&provider_id, EvictionReason::LivenessExhausted)
+        .unwrap();
     let err = pool.request_admission(provider_id).unwrap_err();
     assert_eq!(err, AdmissionError::MaxReAdmissionsExceeded);
 }
@@ -3867,40 +4748,47 @@ fn pool_max_readmissions_blocks_after_limit() {
 #[test]
 fn pool_eviction_check_does_not_consume_budget() {
     let kp_a = KeyPair::generate();
-    let id_a  = kp_a.public;
-    let kp_b  = KeyPair::generate();
-    let id_b  = kp_b.public;
+    let id_a = kp_a.public;
+    let kp_b = KeyPair::generate();
+    let id_b = kp_b.public;
 
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(4)
         .with_admission(AdmissionConfig {
-            max_admits_per_window: 2,   // slot 1 for setup, slot 2 for proof
-            window_duration:       Duration::from_secs(60),
-            challenge_ttl:         Duration::from_secs(60),
+            max_admits_per_window: 2, // slot 1 for setup, slot 2 for proof
+            window_duration: Duration::from_secs(60),
+            challenge_ttl: Duration::from_secs(60),
         })
         .with_eviction(EvictionConfig {
-            liveness_cooldown_secs:     0,
+            liveness_cooldown_secs: 0,
             equivocation_cooldown_secs: 0,
-            max_re_admissions:          0,  // block on first eviction
+            max_re_admissions: 0, // block on first eviction
         });
 
     // Admit A (budget: 1/2 used).
     let c = pool.request_admission(id_a).unwrap();
     let sig = kp_a.sign(&admission_challenge_message(&id_a, &c));
-    pool.complete_admission(id_a, &sig, SubstrateLedger::new()).unwrap();
+    pool.complete_admission(id_a, &sig, SubstrateLedger::new())
+        .unwrap();
 
     // Evict A (max_re_admissions=0 → immediately blocked).
-    pool.evict(&id_a, EvictionReason::LivenessExhausted).unwrap();
+    pool.evict(&id_a, EvictionReason::LivenessExhausted)
+        .unwrap();
 
     // Requesting A again → MaxReAdmissionsExceeded (eviction gate, NOT budget gate).
     let err = pool.request_admission(id_a).unwrap_err();
-    assert_eq!(err, AdmissionError::MaxReAdmissionsExceeded,
-        "eviction gate must fire before budget check");
+    assert_eq!(
+        err,
+        AdmissionError::MaxReAdmissionsExceeded,
+        "eviction gate must fire before budget check"
+    );
 
     // Requesting B → slot 2 must still be available.
     let result = pool.request_admission(id_b);
-    assert!(result.is_ok(),
-        "budget must not be consumed by eviction-gate rejection; got {result:?}");
+    assert!(
+        result.is_ok(),
+        "budget must not be consumed by eviction-gate rejection; got {result:?}"
+    );
 }
 
 // ── §118. evict() respects the DormantBelowFloor gate ───────────────────────────
@@ -3913,14 +4801,18 @@ fn pool_evict_floor_gate_fires() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
         .with_active_window(2)
         .with_eviction(EvictionConfig {
-            liveness_cooldown_secs:     300,
+            liveness_cooldown_secs: 300,
             equivocation_cooldown_secs: 3600,
-            max_re_admissions:          3,
+            max_re_admissions: 3,
         });
     // pid(0..1) → active; pid(2..3) → dormant (exactly active_window dormant)
-    for i in 0..4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 0..4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
     // dormant.len()=2, active_window=2: removing one → 1 < 2 → floor violation
 
-    let err = pool.evict(&pid(2), EvictionReason::LivenessExhausted).unwrap_err();
+    let err = pool
+        .evict(&pid(2), EvictionReason::LivenessExhausted)
+        .unwrap_err();
     assert_eq!(err, EvictionError::WouldViolateDormantFloor);
 }

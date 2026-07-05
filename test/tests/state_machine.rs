@@ -2,26 +2,26 @@
 // Covers: vitality scoring, lineage chain verification, ledger state machine
 
 use scp_cryptography::keys::KeyPair;
-use scp_identity::{
-    genesis::IdentityGenesis,
-    lineage::ContinuityProof,
-    rotation::RotationEvent,
+use scp_identity::{genesis::IdentityGenesis, lineage::ContinuityProof, rotation::RotationEvent};
+use scp_ledger_cosmos::CosmosLedger;
+use scp_ledger_substrate::{
+    tunnel_consent_hash, LedgerIdentityRecord, SubstrateLedger, TunnelConsent, TunnelState,
 };
 use scp_vitality::{
     function::{compute, VitalityParams},
     state::VitalityState,
 };
-use scp_ledger_substrate::{
-    LedgerIdentityRecord, SubstrateLedger, TunnelConsent, TunnelState,
-    tunnel_consent_hash,
-};
-use scp_ledger_cosmos::CosmosLedger;
 
 // ── Vitality function ───────────────────────────────────────────────────────
 
 #[test]
 fn vitality_perfect_conditions_is_active() {
-    let v = compute(VitalityParams { t: 0.0, i: 1.0, r: 1.0, p: 0.0 });
+    let v = compute(VitalityParams {
+        t: 0.0,
+        i: 1.0,
+        r: 1.0,
+        p: 0.0,
+    });
     assert_eq!(VitalityState::from_score(v), VitalityState::Active);
     assert!((v - 1.0).abs() < 1e-9);
 }
@@ -30,30 +30,66 @@ fn vitality_perfect_conditions_is_active() {
 fn vitality_decays_with_time() {
     let seven_days = 7.0 * 24.0 * 3600.0;
     let fourteen_days = 14.0 * 24.0 * 3600.0;
-    let v7  = compute(VitalityParams { t: seven_days,   i: 1.0, r: 1.0, p: 0.0 });
-    let v14 = compute(VitalityParams { t: fourteen_days, i: 1.0, r: 1.0, p: 0.0 });
+    let v7 = compute(VitalityParams {
+        t: seven_days,
+        i: 1.0,
+        r: 1.0,
+        p: 0.0,
+    });
+    let v14 = compute(VitalityParams {
+        t: fourteen_days,
+        i: 1.0,
+        r: 1.0,
+        p: 0.0,
+    });
     assert!(v7 > v14, "vitality must decay with time");
     assert!(v7 > 0.0 && v14 > 0.0, "vitality must remain positive");
 }
 
 #[test]
 fn vitality_zero_interaction_entropy_scores_zero() {
-    let v = compute(VitalityParams { t: 0.0, i: 0.0, r: 1.0, p: 0.0 });
+    let v = compute(VitalityParams {
+        t: 0.0,
+        i: 0.0,
+        r: 1.0,
+        p: 0.0,
+    });
     assert_eq!(v, 0.0, "zero interaction entropy must yield zero vitality");
 }
 
 #[test]
 fn vitality_one_sided_participation_is_warm_or_lower() {
-    let v = compute(VitalityParams { t: 0.0, i: 1.0, r: 0.0, p: 0.0 });
-    assert_eq!(v, 0.0, "zero reciprocal participation must yield zero vitality");
+    let v = compute(VitalityParams {
+        t: 0.0,
+        i: 1.0,
+        r: 0.0,
+        p: 0.0,
+    });
+    assert_eq!(
+        v, 0.0,
+        "zero reciprocal participation must yield zero vitality"
+    );
 }
 
 #[test]
 fn vitality_perturbation_reduces_score() {
-    let base = compute(VitalityParams { t: 0.0, i: 1.0, r: 1.0, p: 0.0 });
-    let perturbed = compute(VitalityParams { t: 0.0, i: 1.0, r: 1.0, p: 1.0 });
+    let base = compute(VitalityParams {
+        t: 0.0,
+        i: 1.0,
+        r: 1.0,
+        p: 0.0,
+    });
+    let perturbed = compute(VitalityParams {
+        t: 0.0,
+        i: 1.0,
+        r: 1.0,
+        p: 1.0,
+    });
     assert!(perturbed < base, "perturbation must reduce vitality score");
-    assert!(perturbed > 0.0, "max perturbation must not zero out vitality entirely");
+    assert!(
+        perturbed > 0.0,
+        "max perturbation must not zero out vitality entirely"
+    );
 }
 
 #[test]
@@ -83,7 +119,7 @@ fn vitality_open_states() {
 #[test]
 fn continuity_proof_empty_chain_fails() {
     let root = KeyPair::generate();
-    let ops  = KeyPair::generate();
+    let ops = KeyPair::generate();
     let proof = ContinuityProof {
         root_pub: root.public,
         rotation_chain: vec![],
@@ -133,10 +169,10 @@ fn continuity_proof_chain_of_three_verifies() {
 
 #[test]
 fn continuity_proof_broken_chain_fails() {
-    let root  = KeyPair::generate();
-    let ops1  = KeyPair::generate();
-    let ops2  = KeyPair::generate();
-    let ops3  = KeyPair::generate();
+    let root = KeyPair::generate();
+    let ops1 = KeyPair::generate();
+    let ops2 = KeyPair::generate();
+    let ops3 = KeyPair::generate();
     let unrelated = KeyPair::generate();
 
     // event1: ops1 → ops2, event2: ops3 → ops3 (gap — ops2 ≠ ops3)
@@ -162,7 +198,7 @@ fn continuity_proof_wrong_current_ops_fails() {
     let proof = ContinuityProof {
         root_pub: root.public,
         rotation_chain: vec![event],
-        current_ops_pub: ops3.public,  // wrong — should be ops2
+        current_ops_pub: ops3.public, // wrong — should be ops2
     };
     assert!(!proof.verify(), "wrong current_ops_pub must not verify");
 }
@@ -171,7 +207,10 @@ fn continuity_proof_wrong_current_ops_fails() {
 
 fn make_record_and_root_sig() -> (LedgerIdentityRecord, [u8; 64], KeyPair) {
     let genesis = IdentityGenesis::execute().unwrap();
-    let root_kp = KeyPair { public: genesis.k_root_pub, secret: genesis.k_root_priv };
+    let root_kp = KeyPair {
+        public: genesis.k_root_pub,
+        secret: genesis.k_root_priv,
+    };
 
     let record = LedgerIdentityRecord {
         k_root_pub: genesis.k_root_pub,
@@ -195,7 +234,9 @@ fn ledger_register_and_query_identity() {
     let ledger = SubstrateLedger::new();
     let (record, sig, _) = make_record_and_root_sig();
 
-    ledger.register_identity(&record, &sig).expect("registration must succeed");
+    ledger
+        .register_identity(&record, &sig)
+        .expect("registration must succeed");
     let ops = ledger.query_current_ops_key(&record.k_root_pub).unwrap();
     assert_eq!(ops, record.k_ops_pub);
 }
@@ -226,11 +267,16 @@ fn ledger_rotate_key_updates_record() {
     let rot = RotationEvent::sign(record.k_ops_pub, new_ops.public, &root_kp).unwrap();
     let rot_sig: [u8; 64] = rot.root_sig.try_into().unwrap();
 
-    ledger.rotate_key(&record.k_ops_pub, &new_ops.public, rot.nonce, &rot_sig).unwrap();
+    ledger
+        .rotate_key(&record.k_ops_pub, &new_ops.public, rot.nonce, &rot_sig)
+        .unwrap();
 
     let current = ledger.query_current_ops_key(&record.k_root_pub).unwrap();
     assert_eq!(current, new_ops.public);
-    assert!(ledger.is_revoked(&record.k_ops_pub), "old ops key must be revoked after rotation");
+    assert!(
+        ledger.is_revoked(&record.k_ops_pub),
+        "old ops key must be revoked after rotation"
+    );
 }
 
 #[test]
@@ -252,10 +298,13 @@ fn ledger_tunnel_consent_lifecycle() {
     let ledger = SubstrateLedger::new();
 
     let alice = KeyPair::generate();
-    let bob   = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = tunnel_consent_hash(&alice.public, &bob.public);
 
-    assert_eq!(ledger.query_tunnel(&alice.public, &bob.public), TunnelState::Unknown);
+    assert_eq!(
+        ledger.query_tunnel(&alice.public, &bob.public),
+        TunnelState::Unknown
+    );
 
     let consent = TunnelConsent {
         party_a: alice.public,
@@ -263,17 +312,25 @@ fn ledger_tunnel_consent_lifecycle() {
         sig_a: alice.sign(&ch).to_vec(),
         sig_b: bob.sign(&ch).to_vec(),
     };
-    ledger.register_tunnel(consent).expect("tunnel registration must succeed");
-    assert_eq!(ledger.query_tunnel(&alice.public, &bob.public), TunnelState::Active);
+    ledger
+        .register_tunnel(consent)
+        .expect("tunnel registration must succeed");
+    assert_eq!(
+        ledger.query_tunnel(&alice.public, &bob.public),
+        TunnelState::Active
+    );
     // Symmetric query
-    assert_eq!(ledger.query_tunnel(&bob.public, &alice.public), TunnelState::Active);
+    assert_eq!(
+        ledger.query_tunnel(&bob.public, &alice.public),
+        TunnelState::Active
+    );
 }
 
 #[test]
 fn ledger_tunnel_revocation_by_either_party() {
     let ledger = SubstrateLedger::new();
     let alice = KeyPair::generate();
-    let bob   = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = tunnel_consent_hash(&alice.public, &bob.public);
 
     let consent = TunnelConsent {
@@ -286,22 +343,27 @@ fn ledger_tunnel_revocation_by_either_party() {
 
     // Alice revokes unilaterally.
     let revoke_sig = alice.sign(&ch);
-    ledger.revoke_tunnel(&alice.public, &revoke_sig, &bob.public).unwrap();
-    assert_eq!(ledger.query_tunnel(&alice.public, &bob.public), TunnelState::Revoked);
+    ledger
+        .revoke_tunnel(&alice.public, &revoke_sig, &bob.public)
+        .unwrap();
+    assert_eq!(
+        ledger.query_tunnel(&alice.public, &bob.public),
+        TunnelState::Revoked
+    );
 }
 
 #[test]
 fn ledger_tunnel_bad_consent_signature_rejected() {
     let ledger = SubstrateLedger::new();
     let alice = KeyPair::generate();
-    let bob   = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = tunnel_consent_hash(&alice.public, &bob.public);
 
     let consent = TunnelConsent {
         party_a: alice.public,
         party_b: bob.public,
         sig_a: alice.sign(&ch).to_vec(),
-        sig_b: alice.sign(&ch).to_vec(),  // wrong signer for party_b
+        sig_b: alice.sign(&ch).to_vec(), // wrong signer for party_b
     };
     assert!(ledger.register_tunnel(consent).is_err());
 }
@@ -329,5 +391,8 @@ fn cosmos_ledger_register_and_query() {
     let sig = root_kp.sign(&msg);
 
     ledger.register_identity(&record, &sig).unwrap();
-    assert_eq!(ledger.query_current_ops_key(&genesis.k_root_pub).unwrap(), genesis.k_ops_pub);
+    assert_eq!(
+        ledger.query_current_ops_key(&genesis.k_root_pub).unwrap(),
+        genesis.k_ops_pub
+    );
 }

@@ -38,10 +38,14 @@ fn make_active_state() -> RecipientState {
     let sig: [u8; 64] = ops_kp.sign(&handshake_sig_message(&eph_pub, expires_at));
 
     RecipientState {
-        ops_pub:             ops_kp.public,
-        vitality:            VitalityState::Active,
-        routing_hints:       vec![],
-        handshake_ephemeral: Some(PublishedHandshakeKey { pub_key: eph_pub, sig, expires_at }),
+        ops_pub: ops_kp.public,
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
+        handshake_ephemeral: Some(PublishedHandshakeKey {
+            pub_key: eph_pub,
+            sig,
+            expires_at,
+        }),
     }
 }
 
@@ -50,9 +54,9 @@ fn make_active_state() -> RecipientState {
 /// the absence of an ephemeral does not affect the rejection behavior being tested.
 fn make_state_with_vitality(vitality: VitalityState) -> RecipientState {
     RecipientState {
-        ops_pub:             KeyPair::generate().public,
+        ops_pub: KeyPair::generate().public,
         vitality,
-        routing_hints:       vec![],
+        routing_hints: vec![],
         handshake_ephemeral: None,
     }
 }
@@ -61,7 +65,7 @@ fn make_state_with_vitality(vitality: VitalityState) -> RecipientState {
 
 #[tokio::test]
 async fn vitality_active_state_permits_send_and_produces_envelope() {
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let result = FlashSession::open_and_send_with_envelope(
@@ -72,9 +76,8 @@ async fn vitality_active_state_permits_send_and_produces_envelope() {
     )
     .await;
 
-    let (_, envelope) = result.expect(
-        "Active vitality must permit send and return a BurstEnvelope on the v2 path",
-    );
+    let (_, envelope) =
+        result.expect("Active vitality must permit send and return a BurstEnvelope on the v2 path");
     assert_eq!(
         envelope.protocol_version, 2,
         "envelope must carry protocol_version = 2"
@@ -85,7 +88,7 @@ async fn vitality_active_state_permits_send_and_produces_envelope() {
 
 #[tokio::test]
 async fn vitality_suspended_rejects_send_with_vitality_insufficient() {
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let result = FlashSession::open_and_send(
@@ -97,7 +100,12 @@ async fn vitality_suspended_rejects_send_with_vitality_insufficient() {
     .await;
 
     assert!(
-        matches!(result, Err(TransportError::VitalityInsufficient(VitalityState::Suspended))),
+        matches!(
+            result,
+            Err(TransportError::VitalityInsufficient(
+                VitalityState::Suspended
+            ))
+        ),
         "Suspended vitality must produce VitalityInsufficient(Suspended)"
     );
 }
@@ -106,7 +114,7 @@ async fn vitality_suspended_rejects_send_with_vitality_insufficient() {
 
 #[tokio::test]
 async fn vitality_severed_rejects_send_with_vitality_insufficient() {
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let result = FlashSession::open_and_send(
@@ -118,7 +126,10 @@ async fn vitality_severed_rejects_send_with_vitality_insufficient() {
     .await;
 
     assert!(
-        matches!(result, Err(TransportError::VitalityInsufficient(VitalityState::Severed))),
+        matches!(
+            result,
+            Err(TransportError::VitalityInsufficient(VitalityState::Severed))
+        ),
         "Severed vitality must produce VitalityInsufficient(Severed)"
     );
 }
@@ -127,7 +138,7 @@ async fn vitality_severed_rejects_send_with_vitality_insufficient() {
 
 #[tokio::test]
 async fn vitality_burned_rejects_send_with_vitality_insufficient() {
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let result = FlashSession::open_and_send(
@@ -139,7 +150,10 @@ async fn vitality_burned_rejects_send_with_vitality_insufficient() {
     .await;
 
     assert!(
-        matches!(result, Err(TransportError::VitalityInsufficient(VitalityState::Burned))),
+        matches!(
+            result,
+            Err(TransportError::VitalityInsufficient(VitalityState::Burned))
+        ),
         "Burned vitality must produce VitalityInsufficient(Burned)"
     );
 }
@@ -148,7 +162,7 @@ async fn vitality_burned_rejects_send_with_vitality_insufficient() {
 
 #[tokio::test]
 async fn vitality_rejection_fires_before_path_selection_and_produces_no_envelope() {
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     // open_and_send_with_envelope is used deliberately: if path selection ran
@@ -165,7 +179,12 @@ async fn vitality_rejection_fires_before_path_selection_and_produces_no_envelope
     .await;
 
     assert!(
-        matches!(result, Err(TransportError::VitalityInsufficient(VitalityState::Suspended))),
+        matches!(
+            result,
+            Err(TransportError::VitalityInsufficient(
+                VitalityState::Suspended
+            ))
+        ),
         "vitality check must fire before path selection (not V1PathNotReceivable) \
          and before key derivation (not DecryptionFailed) — no BurstEnvelope is produced"
     );

@@ -34,8 +34,8 @@
 //   - transport behavior during provider degradation
 //   - relay, localhost, LAN, desktop, or hardware readiness
 
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 use scp_ledger_substrate::SubstrateLedger;
 use scp_provider_pool::{EpochPhase, ProviderPool, SamplingStrategy};
@@ -43,11 +43,15 @@ use scp_vitality::{VitalityEvidenceStore, VitalityState};
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-fn pid(byte: u8) -> [u8; 32] { [byte; 32] }
+fn pid(byte: u8) -> [u8; 32] {
+    [byte; 32]
+}
 
 /// Deterministic RNG with a fixed seed. Produces the same selection trace on
 /// every test run — no statistical convergence, no RNG-dependent assertions.
-fn seeded() -> StdRng { StdRng::seed_from_u64(0) }
+fn seeded() -> StdRng {
+    StdRng::seed_from_u64(0)
+}
 
 // ── T1: Healthy baseline ───────────────────────────────────────────────────────
 //
@@ -68,49 +72,68 @@ fn seeded() -> StdRng { StdRng::seed_from_u64(0) }
 fn t1_healthy_baseline_snapshot_fields_are_exact() {
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
     // Fixed selection trace: 16 samples, seeded RNG → deterministic appearances.
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // Fixed response trace: 4 responses per provider = uniform distribution.
     for i in 1u8..=4 {
-        for _ in 0..4 { pool.record_response(pid(i)); }
+        for _ in 0..4 {
+            pool.record_response(pid(i));
+        }
     }
 
     let snap = pool.operational_telemetry();
 
     // — Evidence context ——————————————————————————————————————————————————
     assert_eq!(snap.active_n, 4);
-    assert_eq!(snap.current_epoch_phase, EpochPhase::Steady,  // 16 ≥ 4 × 4
-        "16 samples with 4 active providers must reach Steady phase");
+    assert_eq!(
+        snap.current_epoch_phase,
+        EpochPhase::Steady, // 16 ≥ 4 × 4
+        "16 samples with 4 active providers must reach Steady phase"
+    );
 
     // — Surface 1: evaluability ———————————————————————————————————————————
-    assert!(snap.survivor_surface_evaluable,
-        "16 samples ≥ active_n=4 → epoch_phase ≠ PostReset → evaluable");
+    assert!(
+        snap.survivor_surface_evaluable,
+        "16 samples ≥ active_n=4 → epoch_phase ≠ PostReset → evaluable"
+    );
 
     // — Surface 1: kappa derived from exact trace ————————————————————————
     let est = pool.exposure_estimate();
-    let expected_kappa = (1.0 - est.selection_entropy_bits / (4_f64).log2())
-        .clamp(0.0, 1.0);
-    assert!((snap.kappa - expected_kappa).abs() < 1e-12,
+    let expected_kappa = (1.0 - est.selection_entropy_bits / (4_f64).log2()).clamp(0.0, 1.0);
+    assert!(
+        (snap.kappa - expected_kappa).abs() < 1e-12,
         "kappa must match value derived from seeded selection trace (entropy={:.4} bits)",
-        est.selection_entropy_bits);
+        est.selection_entropy_bits
+    );
 
     // — Surface 2 ————————————————————————————————————————————————————————
-    assert!(snap.liveness_surface_evaluable,
-        "response_total > 0 AND selection_total > 0 → liveness surface evaluable");
+    assert!(
+        snap.liveness_surface_evaluable,
+        "response_total > 0 AND selection_total > 0 → liveness surface evaluable"
+    );
 
     // Exact: −4 × (4/16 × log₂(4/16)) = 2.0 bits → lwk = 1 − 2.0/2.0 = 0.0
-    assert_eq!(snap.liveness_weighted_kappa, 0.0,
-        "4 equal responses across 4 providers → response entropy = log₂(4) → lwk = 0.0");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.0,
+        "4 equal responses across 4 providers → response entropy = log₂(4) → lwk = 0.0"
+    );
 
     // — Surface 3 ————————————————————————————————————————————————————————
     assert_eq!(snap.selection_total, 16);
     assert_eq!(snap.response_total, 16);
     assert!(snap.availability_evaluable);
-    assert_eq!(snap.recent_reported_response_ratio(), Some(1.0),
-        "16 responses / 16 selections = 1.0");
+    assert_eq!(
+        snap.recent_reported_response_ratio(),
+        Some(1.0),
+        "16 responses / 16 selections = 1.0"
+    );
 }
 
 // ── T2: Explicit failure concentrates selection surface ────────────────────────
@@ -132,8 +155,7 @@ fn t1_healthy_baseline_snapshot_fields_are_exact() {
 #[test]
 fn t2_explicit_failure_concentrates_selection_surface() {
     let mut rng = seeded();
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_liveness(2, u64::MAX); // dead when consecutive_failures ≥ 2
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_liveness(2, u64::MAX); // dead when consecutive_failures ≥ 2
     pool.add(pid(1), SubstrateLedger::new()); // healthy
     pool.add(pid(2), SubstrateLedger::new()); // will fail
 
@@ -142,27 +164,39 @@ fn t2_explicit_failure_concentrates_selection_surface() {
     pool.record_failure(pid(2));
 
     // Fixed selection trace: 4 samples — pid(2) filtered → only pid(1) selected.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // Fixed response trace: pid(1) responds each time, pid(2) is silent.
-    for _ in 0..4 { pool.record_response(pid(1)); }
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
 
     let snap = pool.operational_telemetry();
 
     // — Evidence context ———————————————————————————————————————————————————
-    assert_eq!(snap.active_n, 2,
-        "both providers remain in pool; dead provider is filtered from sample, not removed");
+    assert_eq!(
+        snap.active_n, 2,
+        "both providers remain in pool; dead provider is filtered from sample, not removed"
+    );
 
     // — Surface 1: exact concentration ————————————————————————————————————
-    assert!(snap.survivor_surface_evaluable,
-        "4 samples ≥ active_n=2 → epoch_phase ≠ PostReset");
-    assert_eq!(snap.kappa, 1.0,
-        "dead pid(2) excluded → only pid(1) in selections → entropy=0 → kappa=1.0");
+    assert!(
+        snap.survivor_surface_evaluable,
+        "4 samples ≥ active_n=2 → epoch_phase ≠ PostReset"
+    );
+    assert_eq!(
+        snap.kappa, 1.0,
+        "dead pid(2) excluded → only pid(1) in selections → entropy=0 → kappa=1.0"
+    );
 
     // — Surface 2: exact concentration ————————————————————————————————————
     assert!(snap.liveness_surface_evaluable);
-    assert_eq!(snap.liveness_weighted_kappa, 1.0,
-        "only pid(1) responded → response_entropy=0 → liveness_weighted_kappa=1.0");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 1.0,
+        "only pid(1) responded → response_entropy=0 → liveness_weighted_kappa=1.0"
+    );
 
     // — Surface 3 ————————————————————————————————————————————————————————
     assert_eq!(snap.selection_total, 4);
@@ -197,44 +231,58 @@ fn t3_silent_failure_distinguishes_liveness_from_selection_surface() {
     pool.add(pid(2), SubstrateLedger::new()); // selected but will never respond
 
     // Fixed selection trace: 8 samples with seeded RNG (deterministic).
-    for _ in 0..8 { let _ = pool.sample(&mut rng); }
+    for _ in 0..8 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // Fixed response trace: only pid(1) responds — pid(2) is silently absent.
-    for _ in 0..8 { pool.record_response(pid(1)); }
+    for _ in 0..8 {
+        pool.record_response(pid(1));
+    }
 
     let snap = pool.operational_telemetry();
-    let est  = pool.exposure_estimate();
+    let est = pool.exposure_estimate();
 
     // — Surface 2: exact ———————————————————————————————————————————————————
-    assert_eq!(snap.liveness_weighted_kappa, 1.0,
-        "only pid(1) in responses → response_entropy=0 bits → liveness_weighted_kappa=1.0");
-    assert!(snap.liveness_surface_evaluable,
-        "response_total=8 > 0 AND selection_total=8 > 0 → liveness surface evaluable");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 1.0,
+        "only pid(1) in responses → response_entropy=0 bits → liveness_weighted_kappa=1.0"
+    );
+    assert!(
+        snap.liveness_surface_evaluable,
+        "response_total=8 > 0 AND selection_total=8 > 0 → liveness surface evaluable"
+    );
 
     // — Surface 3 ————————————————————————————————————————————————————————
     assert_eq!(snap.selection_total, 8);
     assert_eq!(snap.response_total, 8);
 
     // — Surface 1: kappa derived from actual seeded trace ————————————————
-    let expected_kappa = (1.0 - est.selection_entropy_bits / (2_f64).log2())
-        .clamp(0.0, 1.0);
-    assert!((snap.kappa - expected_kappa).abs() < 1e-12,
-        "kappa must match value derived from seeded selection trace");
+    let expected_kappa = (1.0 - est.selection_entropy_bits / (2_f64).log2()).clamp(0.0, 1.0);
+    assert!(
+        (snap.kappa - expected_kappa).abs() < 1e-12,
+        "kappa must match value derived from seeded selection trace"
+    );
 
     // — Silent-failure distinction ————————————————————————————————————————
     // response_entropy (0) ≤ selection_entropy (≥ 0) → lwk ≥ kappa always.
-    assert!(snap.liveness_weighted_kappa >= snap.kappa,
+    assert!(
+        snap.liveness_weighted_kappa >= snap.kappa,
         "liveness_weighted_kappa ({:.4}) must be ≥ kappa ({:.4}): \
          response entropy cannot exceed selection entropy when only a subset responds",
-        snap.liveness_weighted_kappa, snap.kappa);
+        snap.liveness_weighted_kappa,
+        snap.kappa
+    );
 
     // If pid(2) was selected at least once, selection entropy > 0 → kappa < 1.0
     // and the distinction is strict (lwk > kappa).
     if est.selection_entropy_bits > 0.0 {
-        assert!(snap.liveness_weighted_kappa > snap.kappa,
+        assert!(
+            snap.liveness_weighted_kappa > snap.kappa,
             "pid(2) selected but silent → liveness surface (lwk=1.0) rises above \
              selection surface (kappa={:.4} < 1.0): silent-failure distinction is observable",
-            snap.kappa);
+            snap.kappa
+        );
     }
 }
 
@@ -257,14 +305,22 @@ fn t3_silent_failure_distinguishes_liveness_from_selection_surface() {
 fn t4_partial_degradation_shows_intermediate_liveness_kappa() {
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
     // Fixed selection trace: 16 samples → Steady phase.
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // Fixed response trace: only pid(1) and pid(2) respond, 4 times each.
-    for _ in 0..4 { pool.record_response(pid(1)); }
-    for _ in 0..4 { pool.record_response(pid(2)); }
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(2));
+    }
     // pid(3) and pid(4) are silent.
 
     let snap = pool.operational_telemetry();
@@ -276,11 +332,16 @@ fn t4_partial_degradation_shows_intermediate_liveness_kappa() {
 
     // — Surface 2: exact intermediate value ————————————————————————————————
     // −2 × (4/8 × log₂(4/8)) = −2 × (0.5 × (−1)) = 1.0 bit; 1 − 1.0/2.0 = 0.5
-    assert_eq!(snap.liveness_weighted_kappa, 0.5,
-        "2 of 4 providers responding uniformly → response_entropy=1.0 bit → lwk=0.5");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.5,
+        "2 of 4 providers responding uniformly → response_entropy=1.0 bit → lwk=0.5"
+    );
 
     // — Surface 3 ————————————————————————————————————————————————————————
-    assert_eq!(snap.response_total, 8,   "4 + 4 responses, pid(3) and pid(4) are silent");
+    assert_eq!(
+        snap.response_total, 8,
+        "4 + 4 responses, pid(3) and pid(4) are silent"
+    );
     assert_eq!(snap.selection_total, 16);
 }
 
@@ -303,8 +364,7 @@ fn t4_partial_degradation_shows_intermediate_liveness_kappa() {
 #[test]
 fn t5_recovery_via_record_response_resets_failure_state() {
     let mut rng = seeded();
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_liveness(2, u64::MAX);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_liveness(2, u64::MAX);
     pool.add(pid(1), SubstrateLedger::new()); // always healthy
     pool.add(pid(2), SubstrateLedger::new()); // fails, then recovers
 
@@ -313,26 +373,38 @@ fn t5_recovery_via_record_response_resets_failure_state() {
     pool.record_failure(pid(2)); // consecutive_failures=2 → NOT live
 
     // Fixed selection + response trace before recovery.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }  // only pid(1) selected
-    for _ in 0..4 { pool.record_response(pid(1)); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    } // only pid(1) selected
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
 
     let pre_snap = pool.operational_telemetry();
     // response_appearances = {pid(1): 4}, response_entropy = 0 bits, lwk = 1.0
-    assert_eq!(pre_snap.liveness_weighted_kappa, 1.0,
-        "pre-recovery: only pid(1) responded → response_entropy=0 → lwk=1.0");
+    assert_eq!(
+        pre_snap.liveness_weighted_kappa, 1.0,
+        "pre-recovery: only pid(1) responded → response_entropy=0 → lwk=1.0"
+    );
 
     // Phase 2: recovery — each record_response() call resets consecutive_failures=0.
     // After the first call, pid(2) is live again; subsequent calls build response history.
-    for _ in 0..4 { pool.record_response(pid(2)); }
+    for _ in 0..4 {
+        pool.record_response(pid(2));
+    }
 
     let post_snap = pool.operational_telemetry();
     // response_appearances = {pid(1): 4, pid(2): 4}, total=8
     // response_entropy = −2 × (0.5 × log₂(0.5)) = 1.0 bit
     // lwk = 1 − 1.0 / log₂(2) = 1 − 1.0 = 0.0
-    assert_eq!(post_snap.liveness_weighted_kappa, 0.0,
-        "post-recovery: equal responses → response_entropy=log₂(2) → lwk=0.0");
-    assert_eq!(post_snap.response_total, 8,
-        "4 (phase-1) + 4 (phase-2) = 8 total responses");
+    assert_eq!(
+        post_snap.liveness_weighted_kappa, 0.0,
+        "post-recovery: equal responses → response_entropy=log₂(2) → lwk=0.0"
+    );
+    assert_eq!(
+        post_snap.response_total, 8,
+        "4 (phase-1) + 4 (phase-2) = 8 total responses"
+    );
     assert!(post_snap.liveness_surface_evaluable);
 }
 
@@ -356,31 +428,47 @@ fn t5_recovery_via_record_response_resets_failure_state() {
 fn t6_provider_isolation_failure_does_not_corrupt_sibling_telemetry() {
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
     // Fixed selection trace for evaluability.
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // pid(1) and pid(2) respond uniformly.
-    for _ in 0..4 { pool.record_response(pid(1)); }
-    for _ in 0..4 { pool.record_response(pid(2)); }
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(2));
+    }
 
     // pid(3) and pid(4) explicitly fail — these must not affect sibling response tracking.
-    for _ in 0..5 { pool.record_failure(pid(3)); }
-    for _ in 0..5 { pool.record_failure(pid(4)); }
+    for _ in 0..5 {
+        pool.record_failure(pid(3));
+    }
+    for _ in 0..5 {
+        pool.record_failure(pid(4));
+    }
 
     let snap = pool.operational_telemetry();
 
     // — Isolation: response_total must be exactly 8 ———————————————————————
-    assert_eq!(snap.response_total, 8,
+    assert_eq!(
+        snap.response_total, 8,
         "10 record_failure() calls for pid(3)/pid(4) must not create phantom responses; \
-         response_total must remain exactly 8");
+         response_total must remain exactly 8"
+    );
 
     // — Exact lwk: 2-provider uniform response out of 4 active ————————————
     // −2 × (4/8 × log₂(4/8)) = 1.0 bit; 1 − 1.0/log₂(4) = 0.5
-    assert_eq!(snap.liveness_weighted_kappa, 0.5,
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.5,
         "pid(1)+pid(2) respond equally → response_entropy=1.0 bit → lwk=0.5 \
-         (failures for pid(3)/pid(4) must not alter this value)");
+         (failures for pid(3)/pid(4) must not alter this value)"
+    );
 
     assert_eq!(snap.active_n, 4);
     assert!(snap.liveness_surface_evaluable);
@@ -410,26 +498,45 @@ fn t7_telemetry_observation_does_not_couple_to_vitality_or_send() {
     store.initialize_at(consent_hash, 0);
 
     let state_before = store.compute_state(consent_hash, 1_000, 1.0, 1.0, 0.0);
-    assert_eq!(state_before, VitalityState::Active,
-        "precondition: consent_hash initialized at t=0 must be Active at t=1_000");
+    assert_eq!(
+        state_before,
+        VitalityState::Active,
+        "precondition: consent_hash initialized at t=0 must be Active at t=1_000"
+    );
 
     // — Drive pool telemetry ———————————————————————————————————————————————
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
 
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
-    for i in 1u8..=4 { for _ in 0..4 { pool.record_response(pid(i)); } }
-    for _ in 0..3  { pool.record_failure(pid(1)); }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
+    for i in 1u8..=4 {
+        for _ in 0..4 {
+            pool.record_response(pid(i));
+        }
+    }
+    for _ in 0..3 {
+        pool.record_failure(pid(1));
+    }
     let _snap = pool.operational_telemetry(); // observation under test
 
     // — Vitality state must be unchanged ———————————————————————————————————
     let state_after = store.compute_state(consent_hash, 1_000, 1.0, 1.0, 0.0);
-    assert_eq!(state_after, VitalityState::Active,
-        "driving pool telemetry must not alter VitalityEvidenceStore state");
+    assert_eq!(
+        state_after,
+        VitalityState::Active,
+        "driving pool telemetry must not alter VitalityEvidenceStore state"
+    );
 
     // — Pool must not have auto-rotated during telemetry observation —————————
     // operational_telemetry() is a read-only snapshot; it must not invoke maybe_rotate().
-    assert_eq!(pool.epoch_count(), 0,
-        "operational_telemetry() must not trigger rotation: epoch_count must remain 0");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "operational_telemetry() must not trigger rotation: epoch_count must remain 0"
+    );
 }

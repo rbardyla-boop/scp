@@ -24,7 +24,10 @@ pub enum EvictionError {
 pub enum EvictionReason {
     /// Provider equivocated on a Consensus-Relevant state claim.
     /// `count` matches the reputation record at the time of eviction.
-    Equivocation { semantic_class: SemanticClassId, count: u32 },
+    Equivocation {
+        semantic_class: SemanticClassId,
+        count: u32,
+    },
     /// Provider exceeded the liveness failure threshold.
     LivenessExhausted,
     /// Operator-initiated permanent ban. Not time-limited.
@@ -64,9 +67,9 @@ pub struct EvictionConfig {
 impl Default for EvictionConfig {
     fn default() -> Self {
         Self {
-            liveness_cooldown_secs:     300,
+            liveness_cooldown_secs: 300,
             equivocation_cooldown_secs: 3600,
-            max_re_admissions:          3,
+            max_re_admissions: 3,
         }
     }
 }
@@ -76,12 +79,15 @@ impl Default for EvictionConfig {
 /// Runtime eviction state stored on `ProviderPool`.
 pub(crate) struct EvictionState {
     pub(crate) records: HashMap<[u8; 32], EvictionRecord>,
-    pub(crate) config:  EvictionConfig,
+    pub(crate) config: EvictionConfig,
 }
 
 impl EvictionState {
     pub(crate) fn new(config: EvictionConfig) -> Self {
-        Self { records: HashMap::new(), config }
+        Self {
+            records: HashMap::new(),
+            config,
+        }
     }
 
     /// Check whether a provider is eligible to request admission.
@@ -92,7 +98,7 @@ impl EvictionState {
     pub(crate) fn check_admission(
         &self,
         provider_id: &[u8; 32],
-        now_secs:     u64,
+        now_secs: u64,
     ) -> Option<AdmissionError> {
         let record = self.records.get(provider_id)?;
 
@@ -108,9 +114,9 @@ impl EvictionState {
 
         // Reason-specific cooldown.
         let cooldown_secs = match &record.reason {
-            EvictionReason::LivenessExhausted       => self.config.liveness_cooldown_secs,
-            EvictionReason::Equivocation { .. }     => self.config.equivocation_cooldown_secs,
-            EvictionReason::OperatorBan              => unreachable!(), // handled above
+            EvictionReason::LivenessExhausted => self.config.liveness_cooldown_secs,
+            EvictionReason::Equivocation { .. } => self.config.equivocation_cooldown_secs,
+            EvictionReason::OperatorBan => unreachable!(), // handled above
         };
 
         let elapsed = now_secs.saturating_sub(record.evicted_at_secs);
@@ -128,8 +134,8 @@ impl EvictionState {
     /// refreshed but `re_admission_count` is preserved — it is a lifetime counter.
     pub(crate) fn record_eviction(
         &mut self,
-        provider_id:    [u8; 32],
-        reason:         EvictionReason,
+        provider_id: [u8; 32],
+        reason: EvictionReason,
         evicted_at_secs: u64,
     ) {
         let entry = self.records.entry(provider_id).or_insert(EvictionRecord {

@@ -26,9 +26,7 @@ use scp_ledger_substrate::{HandshakeEphemeral, SubstrateLedger};
 use scp_relay_cache::WarmCache;
 use scp_relay_perturbation::PerturbationEngine;
 use scp_transport::flash::FlashSession;
-use scp_transport::harness::{
-    deserialize_burst, serialize_burst, receive_harness, DevMailboxId,
-};
+use scp_transport::harness::{deserialize_burst, receive_harness, serialize_burst, DevMailboxId};
 use scp_wire_format::signing::handshake_sig_message;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -46,7 +44,9 @@ struct DevRelayMailbox {
 
 impl DevRelayMailbox {
     fn new() -> Self {
-        Self { store: Mutex::new(HashMap::new()) }
+        Self {
+            store: Mutex::new(HashMap::new()),
+        }
     }
 
     fn put(&self, mailbox_id: &DevMailboxId, burst_cbor: Vec<u8>) {
@@ -71,8 +71,8 @@ impl DevRelayMailbox {
 
 struct TrialIdentityB {
     handshake_secret: [u8; 32],
-    ops_pub:          [u8; 32],
-    ledger:           SubstrateLedger,
+    ops_pub: [u8; 32],
+    ledger: SubstrateLedger,
 }
 
 fn setup_b() -> TrialIdentityB {
@@ -92,8 +92,8 @@ fn setup_b() -> TrialIdentityB {
         .publish_handshake_ephemeral(
             &ops_kp.public,
             HandshakeEphemeral {
-                pub_key:      handshake_pub,
-                sig:          sig.to_vec(),
+                pub_key: handshake_pub,
+                sig: sig.to_vec(),
                 published_at: 0,
                 expires_at,
             },
@@ -115,7 +115,7 @@ async fn trial0_relay_mailbox_ab_full_flow() {
     let mailbox = DevRelayMailbox::new();
     let mailbox_id = DevMailboxId::generate();
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     // A: retrieve state, package harness burst.
@@ -135,7 +135,11 @@ async fn trial0_relay_mailbox_ab_full_flow() {
 
     // B: drain mailbox by token, deserialize, decrypt.
     let bursts = mailbox.drain(&mailbox_id);
-    assert_eq!(bursts.len(), 1, "relay mailbox must contain exactly one burst");
+    assert_eq!(
+        bursts.len(),
+        1,
+        "relay mailbox must contain exactly one burst"
+    );
 
     let recovered_burst = deserialize_burst(&bursts[0]).expect("deserialize_burst must succeed");
     let plaintext = receive_harness(&b.handshake_secret, &b.ops_pub, &recovered_burst)
@@ -156,7 +160,7 @@ async fn trial0_relay_routing_key_is_mailbox_id_not_ops_pub() {
     let mailbox = DevRelayMailbox::new();
     let mailbox_id = DevMailboxId::generate();
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let state = FlashSession::retrieve_state(&b.ledger, &b.ops_pub)
@@ -184,7 +188,11 @@ async fn trial0_relay_routing_key_is_mailbox_id_not_ops_pub() {
 
     // The real mailbox_id retrieves the burst.
     let drained = mailbox.drain(&mailbox_id);
-    assert_eq!(drained.len(), 1, "correct mailbox_id must retrieve the burst");
+    assert_eq!(
+        drained.len(),
+        1,
+        "correct mailbox_id must retrieve the burst"
+    );
 }
 
 // ── Test 3: wrong mailbox token cannot retrieve burst ────────────────────────
@@ -194,19 +202,23 @@ async fn trial0_wrong_mailbox_token_cannot_retrieve() {
     let b = setup_b();
     let mailbox = DevRelayMailbox::new();
     let mailbox_id = DevMailboxId::generate();
-    let wrong_id   = DevMailboxId::generate();
+    let wrong_id = DevMailboxId::generate();
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let state = FlashSession::retrieve_state(&b.ledger, &b.ops_pub)
         .await
         .unwrap();
 
-    let (_session, burst) =
-        FlashSession::open_and_package_harness_burst(state, b"mailbox partitioning", &cache, &engine)
-            .await
-            .unwrap();
+    let (_session, burst) = FlashSession::open_and_package_harness_burst(
+        state,
+        b"mailbox partitioning",
+        &cache,
+        &engine,
+    )
+    .await
+    .unwrap();
 
     let cbor = serialize_burst(&burst).unwrap();
     mailbox.put(&mailbox_id, cbor);
@@ -219,7 +231,11 @@ async fn trial0_wrong_mailbox_token_cannot_retrieve() {
 
     // Correct token still retrieves.
     let correct_drain = mailbox.drain(&mailbox_id);
-    assert_eq!(correct_drain.len(), 1, "correct token must still retrieve the burst");
+    assert_eq!(
+        correct_drain.len(),
+        1,
+        "correct token must still retrieve the burst"
+    );
 }
 
 // ── Test 4: wrong recipient secret cannot decrypt ────────────────────────────
@@ -230,7 +246,7 @@ async fn trial0_wrong_recipient_secret_cannot_decrypt() {
     let mailbox = DevRelayMailbox::new();
     let mailbox_id = DevMailboxId::generate();
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let state = FlashSession::retrieve_state(&b.ledger, &b.ops_pub)
@@ -264,7 +280,7 @@ async fn trial0_modified_ciphertext_fails_after_mailbox_transit() {
     let mailbox = DevRelayMailbox::new();
     let mailbox_id = DevMailboxId::generate();
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let state = FlashSession::retrieve_state(&b.ledger, &b.ops_pub)
@@ -299,17 +315,21 @@ async fn trial0_modified_enc_nonce_fails_after_mailbox_transit() {
     let mailbox = DevRelayMailbox::new();
     let mailbox_id = DevMailboxId::generate();
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let state = FlashSession::retrieve_state(&b.ledger, &b.ops_pub)
         .await
         .unwrap();
 
-    let (_session, burst) =
-        FlashSession::open_and_package_harness_burst(state, b"nonce integrity test", &cache, &engine)
-            .await
-            .unwrap();
+    let (_session, burst) = FlashSession::open_and_package_harness_burst(
+        state,
+        b"nonce integrity test",
+        &cache,
+        &engine,
+    )
+    .await
+    .unwrap();
 
     let cbor = serialize_burst(&burst).unwrap();
     mailbox.put(&mailbox_id, cbor);
@@ -331,7 +351,7 @@ async fn trial0_modified_enc_nonce_fails_after_mailbox_transit() {
 #[tokio::test]
 async fn trial0_cbor_transit_preserves_burst_fields() {
     let b = setup_b();
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let state = FlashSession::retrieve_state(&b.ledger, &b.ops_pub)
@@ -347,11 +367,11 @@ async fn trial0_cbor_transit_preserves_burst_fields() {
     let recovered = deserialize_burst(&cbor).unwrap();
 
     assert_eq!(burst.sender_ephemeral_pub, recovered.sender_ephemeral_pub);
-    assert_eq!(burst.route_id,             recovered.route_id);
-    assert_eq!(burst.freshness_nonce,      recovered.freshness_nonce);
-    assert_eq!(burst.vitality_byte,        recovered.vitality_byte);
-    assert_eq!(burst.enc_nonce,            recovered.enc_nonce);
-    assert_eq!(burst.ciphertext,           recovered.ciphertext);
+    assert_eq!(burst.route_id, recovered.route_id);
+    assert_eq!(burst.freshness_nonce, recovered.freshness_nonce);
+    assert_eq!(burst.vitality_byte, recovered.vitality_byte);
+    assert_eq!(burst.enc_nonce, recovered.enc_nonce);
+    assert_eq!(burst.ciphertext, recovered.ciphertext);
 }
 
 // ── Test 8: relay burst bytes do not expose plaintext ────────────────────────
@@ -359,7 +379,7 @@ async fn trial0_cbor_transit_preserves_burst_fields() {
 #[tokio::test]
 async fn trial0_relay_burst_bytes_do_not_expose_plaintext() {
     let b = setup_b();
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let state = FlashSession::retrieve_state(&b.ledger, &b.ops_pub)

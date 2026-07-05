@@ -37,11 +37,13 @@
 // For floating-point outputs: assert exact derived values or use 1e-12 tolerance.
 // For boundary values (0.0, 1.0, 0.5): assert_eq! for exact match.
 
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 use scp_cryptography::keys::KeyPair;
 use scp_cryptography::x25519_generate_keypair;
-use scp_ledger_substrate::{HandshakeEphemeral, SubstrateLedger, TunnelConsent, tunnel_consent_hash};
+use scp_ledger_substrate::{
+    tunnel_consent_hash, HandshakeEphemeral, SubstrateLedger, TunnelConsent,
+};
 use scp_provider_pool::{EpochPhase, ProviderPool, SamplingStrategy};
 use scp_relay_cache::WarmCache;
 use scp_relay_perturbation::PerturbationEngine;
@@ -55,20 +57,30 @@ use std::time::Duration;
 // scenarios but must not duplicate telemetry formulas, reproduce send-gating
 // rules, or bypass open_and_send_sim() for send-path assertions.
 
-fn pid(byte: u8) -> [u8; 32] { [byte; 32] }
+fn pid(byte: u8) -> [u8; 32] {
+    [byte; 32]
+}
 
 /// Deterministic RNG with fixed seed 0. Produces the same selection trace on every run.
-fn seeded() -> StdRng { StdRng::seed_from_u64(0) }
+fn seeded() -> StdRng {
+    StdRng::seed_from_u64(0)
+}
 
-fn register_bilateral_consent(ledger: &SubstrateLedger, kp_a: &KeyPair, kp_b: &KeyPair) -> [u8; 32] {
+fn register_bilateral_consent(
+    ledger: &SubstrateLedger,
+    kp_a: &KeyPair,
+    kp_b: &KeyPair,
+) -> [u8; 32] {
     let ch = tunnel_consent_hash(&kp_a.public, &kp_b.public);
     let consent = TunnelConsent {
         party_a: kp_a.public,
         party_b: kp_b.public,
-        sig_a:   kp_a.sign(&ch).to_vec(),
-        sig_b:   kp_b.sign(&ch).to_vec(),
+        sig_a: kp_a.sign(&ch).to_vec(),
+        sig_b: kp_b.sign(&ch).to_vec(),
     };
-    ledger.register_tunnel(consent).expect("bilateral tunnel registration must succeed");
+    ledger
+        .register_tunnel(consent)
+        .expect("bilateral tunnel registration must succeed");
     ch
 }
 
@@ -77,12 +89,13 @@ fn publish_ephemeral_at(ledger: &SubstrateLedger, ops_kp: &KeyPair, sim_now: u64
     let expires_at = sim_now + 3_600;
     let sig: [u8; 64] = ops_kp.sign(&handshake_sig_message(&eph_pub, expires_at));
     let eph = HandshakeEphemeral {
-        pub_key:      eph_pub,
-        sig:          sig.to_vec(),
+        pub_key: eph_pub,
+        sig: sig.to_vec(),
         published_at: sim_now,
         expires_at,
     };
-    ledger.publish_handshake_ephemeral(&ops_kp.public, eph)
+    ledger
+        .publish_handshake_ephemeral(&ops_kp.public, eph)
         .expect("ephemeral publish must succeed");
 }
 
@@ -91,8 +104,12 @@ fn std_ctx(consent_hash: [u8; 32], now: u64) -> SimVitalityEvaluationContext {
         .expect("standard controls must be valid")
 }
 
-fn warm_cache() -> WarmCache { WarmCache::new(Duration::from_secs(600)) }
-fn passthrough() -> PerturbationEngine { PerturbationEngine::passthrough() }
+fn warm_cache() -> WarmCache {
+    WarmCache::new(Duration::from_secs(600))
+}
+fn passthrough() -> PerturbationEngine {
+    PerturbationEngine::passthrough()
+}
 
 // ── T1: Healthy fixed-response baseline ──────────────────────────────────────
 //
@@ -110,39 +127,64 @@ fn passthrough() -> PerturbationEngine { PerturbationEngine::passthrough() }
 fn t1_healthy_fixed_response_baseline() {
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
-    for i in 1u8..=4 { for _ in 0..4 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
+    for i in 1u8..=4 {
+        for _ in 0..4 {
+            pool.record_response(pid(i));
+        }
+    }
 
     let snap = pool.operational_telemetry();
-    let est  = pool.exposure_estimate();
+    let est = pool.exposure_estimate();
 
     // Surface 1 — survivor concentration
     assert_eq!(snap.active_n, 4);
-    assert_eq!(snap.current_epoch_phase, EpochPhase::Steady,
-        "16 samples with 4 active providers must reach Steady phase");
-    assert!(snap.survivor_surface_evaluable,
-        "Steady phase → survivor surface evaluable");
+    assert_eq!(
+        snap.current_epoch_phase,
+        EpochPhase::Steady,
+        "16 samples with 4 active providers must reach Steady phase"
+    );
+    assert!(
+        snap.survivor_surface_evaluable,
+        "Steady phase → survivor surface evaluable"
+    );
     let expected_kappa = (1.0_f64 - est.selection_entropy_bits / 4_f64.log2()).clamp(0.0, 1.0);
-    assert!((snap.kappa - expected_kappa).abs() < 1e-12,
-        "kappa must match value derived from seeded selection trace");
+    assert!(
+        (snap.kappa - expected_kappa).abs() < 1e-12,
+        "kappa must match value derived from seeded selection trace"
+    );
 
     // Surface 2 — relative liveness distortion
-    assert!(snap.liveness_surface_evaluable,
-        "16 responses and 16 selections → liveness surface evaluable");
-    assert_eq!(snap.liveness_weighted_kappa, 0.0,
-        "uniform 4-provider response: response_entropy = log₂(4) = 2.0 bits → lwk = 0.0");
+    assert!(
+        snap.liveness_surface_evaluable,
+        "16 responses and 16 selections → liveness surface evaluable"
+    );
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.0,
+        "uniform 4-provider response: response_entropy = log₂(4) = 2.0 bits → lwk = 0.0"
+    );
 
     // Surface 3 — absolute availability
     assert!(snap.availability_evaluable);
     assert_eq!(snap.selection_total, 16);
     assert_eq!(snap.response_total, 16);
-    assert_eq!(snap.recent_reported_response_ratio(), Some(1.0),
-        "all selections responded → ratio = 1.0 (no degradation)");
+    assert_eq!(
+        snap.recent_reported_response_ratio(),
+        Some(1.0),
+        "all selections responded → ratio = 1.0 (no degradation)"
+    );
 
     // No rotation or policy action
-    assert_eq!(pool.epoch_count(), 0,
-        "no operation must have triggered rotation: epoch_count = 0");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "no operation must have triggered rotation: epoch_count = 0"
+    );
 }
 
 // ── T2: Total silent-failure baseline ────────────────────────────────────────
@@ -161,35 +203,53 @@ fn t1_healthy_fixed_response_baseline() {
 fn t2_total_silent_failure_baseline() {
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
     // No record_response() calls — total silence
 
     let snap = pool.operational_telemetry();
-    let est  = pool.exposure_estimate();
+    let est = pool.exposure_estimate();
 
     // Surface 1 — survivor concentration (selection trace is identical to T1)
     assert_eq!(snap.active_n, 4);
-    assert_eq!(snap.current_epoch_phase, EpochPhase::Steady,
-        "16 samples → Steady regardless of response trace");
+    assert_eq!(
+        snap.current_epoch_phase,
+        EpochPhase::Steady,
+        "16 samples → Steady regardless of response trace"
+    );
     assert!(snap.survivor_surface_evaluable);
     let expected_kappa = (1.0_f64 - est.selection_entropy_bits / 4_f64.log2()).clamp(0.0, 1.0);
-    assert!((snap.kappa - expected_kappa).abs() < 1e-12,
-        "kappa is determined by the seeded selection trace, not the response trace");
+    assert!(
+        (snap.kappa - expected_kappa).abs() < 1e-12,
+        "kappa is determined by the seeded selection trace, not the response trace"
+    );
 
     // Surface 2 — relative liveness distortion: unevaluable with 0 responses
-    assert!(!snap.liveness_surface_evaluable,
-        "response_total = 0 → liveness surface unevaluable");
-    assert_eq!(snap.liveness_weighted_kappa, 1.0,
-        "no responses: response_entropy = 0.0 bits → lwk = 1.0");
+    assert!(
+        !snap.liveness_surface_evaluable,
+        "response_total = 0 → liveness surface unevaluable"
+    );
+    assert_eq!(
+        snap.liveness_weighted_kappa, 1.0,
+        "no responses: response_entropy = 0.0 bits → lwk = 1.0"
+    );
 
     // Surface 3 — absolute availability: degraded to zero
-    assert!(snap.availability_evaluable,
-        "selection_total = 16 > 0 → availability surface evaluable");
+    assert!(
+        snap.availability_evaluable,
+        "selection_total = 16 > 0 → availability surface evaluable"
+    );
     assert_eq!(snap.selection_total, 16);
     assert_eq!(snap.response_total, 0);
-    assert_eq!(snap.recent_reported_response_ratio(), Some(0.0),
-        "0 responses / 16 selections = 0.0 (maximally degraded ratio)");
+    assert_eq!(
+        snap.recent_reported_response_ratio(),
+        Some(0.0),
+        "0 responses / 16 selections = 0.0 (maximally degraded ratio)"
+    );
 
     assert_eq!(pool.epoch_count(), 0);
 }
@@ -213,43 +273,65 @@ fn t2_total_silent_failure_baseline() {
 fn t3_asymmetric_selective_suppression() {
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
     // pid(4) is silent — selected but never responds
-    for _ in 0..4 { pool.record_response(pid(1)); }
-    for _ in 0..4 { pool.record_response(pid(2)); }
-    for _ in 0..4 { pool.record_response(pid(3)); }
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(2));
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(3));
+    }
 
     let snap = pool.operational_telemetry();
-    let est  = pool.exposure_estimate();
+    let est = pool.exposure_estimate();
 
-    assert!(snap.liveness_surface_evaluable,
-        "12 responses and 16 selections → liveness surface evaluable");
+    assert!(
+        snap.liveness_surface_evaluable,
+        "12 responses and 16 selections → liveness surface evaluable"
+    );
     assert_eq!(snap.response_total, 12);
     assert_eq!(snap.selection_total, 16);
 
     // Exact kappa from seeded selection trace (same selection distribution as T1)
     let expected_kappa = (1.0_f64 - est.selection_entropy_bits / 4_f64.log2()).clamp(0.0, 1.0);
-    assert!((snap.kappa - expected_kappa).abs() < 1e-12,
-        "kappa must match value derived from the seeded selection trace");
+    assert!(
+        (snap.kappa - expected_kappa).abs() < 1e-12,
+        "kappa must match value derived from the seeded selection trace"
+    );
 
     // Exact liveness_weighted_kappa from response entropy: derived from exposure_estimate
     let expected_lwk = (1.0_f64 - est.response_entropy_bits / 4_f64.log2()).clamp(0.0, 1.0);
-    assert!((snap.liveness_weighted_kappa - expected_lwk).abs() < 1e-12,
-        "liveness_weighted_kappa must match derivation from response entropy estimate");
+    assert!(
+        (snap.liveness_weighted_kappa - expected_lwk).abs() < 1e-12,
+        "liveness_weighted_kappa must match derivation from response entropy estimate"
+    );
 
     // lwk > 0: pid(4) silent → response entropy < log₂(4) → lwk > 0 (not healthy)
-    assert!(snap.liveness_weighted_kappa > 0.0,
-        "asymmetric suppression: one silent provider → lwk > 0 (distinguishable from healthy)");
+    assert!(
+        snap.liveness_weighted_kappa > 0.0,
+        "asymmetric suppression: one silent provider → lwk > 0 (distinguishable from healthy)"
+    );
 
     // lwk ≥ kappa: response entropy cannot exceed selection entropy
-    assert!(snap.liveness_weighted_kappa >= snap.kappa,
-        "response entropy ≤ selection entropy → lwk ≥ kappa always");
+    assert!(
+        snap.liveness_weighted_kappa >= snap.kappa,
+        "response entropy ≤ selection entropy → lwk ≥ kappa always"
+    );
 
     // lwk > kappa iff pid(4) was selected — confirmed if seeded selection has entropy > 0
     if est.selection_entropy_bits > 0.0 {
-        assert!(snap.liveness_weighted_kappa > snap.kappa,
-            "pid(4) selected but silent → response entropy < selection entropy → lwk > kappa");
+        assert!(
+            snap.liveness_weighted_kappa > snap.kappa,
+            "pid(4) selected but silent → response entropy < selection entropy → lwk > kappa"
+        );
     }
 
     assert_eq!(pool.epoch_count(), 0);
@@ -276,13 +358,19 @@ fn t4_alternating_selective_suppression() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
     pool.add(pid(1), SubstrateLedger::new());
     pool.add(pid(2), SubstrateLedger::new());
-    for _ in 0..8 { let _ = pool.sample(&mut rng); }
+    for _ in 0..8 {
+        let _ = pool.sample(&mut rng);
+    }
     // pid(2) responds for only half of its selections (alternating)
-    for _ in 0..4 { pool.record_response(pid(1)); }
-    for _ in 0..2 { pool.record_response(pid(2)); }
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
+    for _ in 0..2 {
+        pool.record_response(pid(2));
+    }
 
     let snap = pool.operational_telemetry();
-    let est  = pool.exposure_estimate();
+    let est = pool.exposure_estimate();
 
     assert!(snap.liveness_surface_evaluable);
     assert_eq!(snap.response_total, 6);
@@ -290,14 +378,20 @@ fn t4_alternating_selective_suppression() {
 
     // Exact lwk from exposure_estimate: log₂(2) = 1.0 exactly in IEEE 754
     let expected_lwk = (1.0_f64 - est.response_entropy_bits / 2_f64.log2()).clamp(0.0, 1.0);
-    assert!((snap.liveness_weighted_kappa - expected_lwk).abs() < 1e-12,
-        "liveness_weighted_kappa must match derivation from response entropy estimate");
+    assert!(
+        (snap.liveness_weighted_kappa - expected_lwk).abs() < 1e-12,
+        "liveness_weighted_kappa must match derivation from response entropy estimate"
+    );
 
     // Distinguishability from both boundary cases
-    assert!(snap.liveness_weighted_kappa > 0.0,
-        "alternating suppression: response entropy < log₂(2) → lwk > 0 (not healthy)");
-    assert!(snap.liveness_weighted_kappa < 1.0,
-        "both providers contribute responses → response entropy > 0 → lwk < 1.0");
+    assert!(
+        snap.liveness_weighted_kappa > 0.0,
+        "alternating suppression: response entropy < log₂(2) → lwk > 0 (not healthy)"
+    );
+    assert!(
+        snap.liveness_weighted_kappa < 1.0,
+        "both providers contribute responses → response entropy > 0 → lwk < 1.0"
+    );
 
     // The alternating trace produces a strictly intermediate lwk between healthy (0.0) and
     // total silent failure (1.0), confirming metric distinguishability of partial suppression.
@@ -327,25 +421,40 @@ fn t4_alternating_selective_suppression() {
 fn t5_symmetric_partial_suppression_defeats_surface2() {
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
     // Symmetric 50% suppression: each provider responds exactly half as often
-    for i in 1u8..=4 { for _ in 0..2 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        for _ in 0..2 {
+            pool.record_response(pid(i));
+        }
+    }
 
     let snap = pool.operational_telemetry();
 
     // Surface 2 looks identical to healthy — symmetric suppression defeats it
-    assert_eq!(snap.liveness_weighted_kappa, 0.0,
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.0,
         "symmetric partial suppression with uniform response distribution: \
-         response_entropy = log₂(4) = 2.0 bits → lwk = 0.0 (Surface 2 cannot distinguish)");
+         response_entropy = log₂(4) = 2.0 bits → lwk = 0.0 (Surface 2 cannot distinguish)"
+    );
     assert!(snap.liveness_surface_evaluable);
 
     // Surface 3 reveals the participation drop
-    assert_eq!(snap.response_total, 8,
-        "4 providers × 2 responses = 8 (half of healthy 16)");
+    assert_eq!(
+        snap.response_total, 8,
+        "4 providers × 2 responses = 8 (half of healthy 16)"
+    );
     assert_eq!(snap.selection_total, 16);
-    assert_eq!(snap.recent_reported_response_ratio(), Some(0.5),
-        "Surface 3: response/selection = 8/16 = 0.5 (50% degradation visible)");
+    assert_eq!(
+        snap.recent_reported_response_ratio(),
+        Some(0.5),
+        "Surface 3: response/selection = 8/16 = 0.5 (50% degradation visible)"
+    );
 
     // EXPLICIT RECORD: Balanced liveness weighting does not imply healthy participation
     // when suppression is symmetric.
@@ -368,19 +477,32 @@ fn t5_symmetric_partial_suppression_defeats_surface2() {
 fn t6_response_ratio_detects_symmetric_suppression_absent_injection() {
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
-    for i in 1u8..=4 { for _ in 0..2 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
+    for i in 1u8..=4 {
+        for _ in 0..2 {
+            pool.record_response(pid(i));
+        }
+    }
 
     let snap = pool.operational_telemetry();
 
     // Exact degraded Surface 3 output
-    assert_eq!(snap.response_total, 8,
-        "underlying suppressed trace: 8 responses in 16 selections");
+    assert_eq!(
+        snap.response_total, 8,
+        "underlying suppressed trace: 8 responses in 16 selections"
+    );
     assert_eq!(snap.selection_total, 16);
     assert!(snap.availability_evaluable);
-    assert_eq!(snap.recent_reported_response_ratio(), Some(0.5),
-        "exact degraded ratio = 0.5: Surface 3 detects 50% symmetric suppression");
+    assert_eq!(
+        snap.recent_reported_response_ratio(),
+        Some(0.5),
+        "exact degraded ratio = 0.5: Surface 3 detects 50% symmetric suppression"
+    );
 
     // Limited counter-signal: this value is accurate only absent injection.
     // record_response() calls are NOT causally bound to actual relay attempts
@@ -410,23 +532,40 @@ fn t6_response_ratio_detects_symmetric_suppression_absent_injection() {
 fn t7_response_injection_masks_suppression_accounting() {
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
     // Underlying suppressed trace: 2 responses per provider (50% suppression)
-    for i in 1u8..=4 { for _ in 0..2 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        for _ in 0..2 {
+            pool.record_response(pid(i));
+        }
+    }
 
     // Confirm degraded baseline before injection (replicates T6)
     let snap_before = pool.operational_telemetry();
-    assert_eq!(snap_before.response_total, 8,
-        "pre-injection: underlying suppressed trace has 8 responses");
+    assert_eq!(
+        snap_before.response_total, 8,
+        "pre-injection: underlying suppressed trace has 8 responses"
+    );
     assert_eq!(snap_before.selection_total, 16);
-    assert_eq!(snap_before.recent_reported_response_ratio(), Some(0.5),
-        "pre-injection: Surface 3 detects 50% suppression → ratio = 0.5");
+    assert_eq!(
+        snap_before.recent_reported_response_ratio(),
+        Some(0.5),
+        "pre-injection: Surface 3 detects 50% suppression → ratio = 0.5"
+    );
 
     // Injection via documented seam: record_response() without prior sample()
     // record_response() does not require a corresponding sample() call;
     // the response_total numerator is freely inflateable (§S64, §S69).
-    for i in 1u8..=4 { for _ in 0..2 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        for _ in 0..2 {
+            pool.record_response(pid(i));
+        }
+    }
 
     let snap_after = pool.operational_telemetry();
 
@@ -434,20 +573,29 @@ fn t7_response_injection_masks_suppression_accounting() {
     // but is now concealed by the injected 8 calls.
 
     // selection_total is unchanged: injection does not require sample() calls
-    assert_eq!(snap_after.selection_total, 16,
-        "injection does not call sample() → selection_total unchanged at 16");
+    assert_eq!(
+        snap_after.selection_total, 16,
+        "injection does not call sample() → selection_total unchanged at 16"
+    );
 
     // response_total is inflated: 8 genuine + 8 injected = 16
-    assert_eq!(snap_after.response_total, 16,
-        "injected record_response() calls inflate response_total from 8 to 16");
+    assert_eq!(
+        snap_after.response_total, 16,
+        "injected record_response() calls inflate response_total from 8 to 16"
+    );
 
     // Surface 3 masked: ratio appears fully healthy after injection
-    assert_eq!(snap_after.recent_reported_response_ratio(), Some(1.0),
-        "injected responses inflate ratio from 0.5 to 1.0 — Surface 3 masked (§S64, §S69)");
+    assert_eq!(
+        snap_after.recent_reported_response_ratio(),
+        Some(1.0),
+        "injected responses inflate ratio from 0.5 to 1.0 — Surface 3 masked (§S64, §S69)"
+    );
 
     // Surface 2 also reads healthy: injected calls restore uniform response distribution
-    assert_eq!(snap_after.liveness_weighted_kappa, 0.0,
-        "injected calls restore uniform response distribution → lwk = 0.0 (Surface 2 masked)");
+    assert_eq!(
+        snap_after.liveness_weighted_kappa, 0.0,
+        "injected calls restore uniform response distribution → lwk = 0.0 (Surface 2 masked)"
+    );
 
     // Both surfaces are now masked by injection despite the underlying suppressed trace.
 }
@@ -469,8 +617,8 @@ fn t7_response_injection_masks_suppression_accounting() {
 #[tokio::test]
 async fn t8_manipulated_telemetry_disconnected_from_vitality_and_send() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -481,47 +629,88 @@ async fn t8_manipulated_telemetry_disconnected_from_vitality_and_send() {
     // Asymmetric selective-suppression trace: pid(4) selected but silent
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
-    for _ in 0..4 { pool.record_response(pid(1)); }
-    for _ in 0..4 { pool.record_response(pid(2)); }
-    for _ in 0..4 { pool.record_response(pid(3)); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(2));
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(3));
+    }
     // pid(4) is silent
 
     // Verify changed, non-zero telemetry on Surface 2
     let snap = pool.operational_telemetry();
-    assert!(snap.liveness_weighted_kappa > 0.0,
-        "asymmetric suppression: lwk > 0 (Surface 2 detects manipulation)");
-    assert!(snap.liveness_weighted_kappa >= snap.kappa,
-        "response entropy ≤ selection entropy → lwk ≥ kappa");
+    assert!(
+        snap.liveness_weighted_kappa > 0.0,
+        "asymmetric suppression: lwk > 0 (Surface 2 detects manipulation)"
+    );
+    assert!(
+        snap.liveness_weighted_kappa >= snap.kappa,
+        "response entropy ≤ selection entropy → lwk ≥ kappa"
+    );
 
     // Vitality evidence timestamp must be unchanged by pool operations
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "pool trace must not alter evidence timestamp: Active at t0+578_388");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm,
-        "pool trace must not alter evidence timestamp: Warm at t0+578_389");
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "pool trace must not alter evidence timestamp: Active at t0+578_388"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm,
+        "pool trace must not alter evidence timestamp: Warm at t0+578_389"
+    );
 
     // Send through open_and_send_sim() with unchanged Active vitality context (ctx.p = 0.0)
     let ctx = std_ctx(ch, t0); // p = 0.0 unchanged
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t8-payload", &warm_cache(), &passthrough(),
-    ).await;
-    assert!(result.is_ok(),
-        "Active vitality must permit send despite manipulated provider telemetry");
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t8-payload",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "Active vitality must permit send despite manipulated provider telemetry"
+    );
 
     // Vitality evidence timestamp unchanged after send
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "send must not refresh evidence: still Active at t0+578_388");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm,
-        "send must not refresh evidence: still Warm at t0+578_389");
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "send must not refresh evidence: still Active at t0+578_388"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm,
+        "send must not refresh evidence: still Warm at t0+578_389"
+    );
 
     // ctx.p unchanged (0.0): standard controls at t0 still yield Active
-    assert_eq!(store.compute_state(ch, t0, 1.0, 1.0, 0.0), VitalityState::Active,
-        "ctx.p = 0.0 unchanged: standard controls at t0 still yield Active");
+    assert_eq!(
+        store.compute_state(ch, t0, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "ctx.p = 0.0 unchanged: standard controls at t0 still yield Active"
+    );
 
     // No rotation triggered by manipulation trace or send
-    assert_eq!(pool.epoch_count(), 0,
-        "no operation must have triggered rotation: epoch_count = 0");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "no operation must have triggered rotation: epoch_count = 0"
+    );
 }
 
 // ── T9: No automatic rotation or control action from manipulation trace ───────
@@ -542,24 +731,44 @@ fn t9_no_automatic_rotation_from_manipulation_trace() {
     let mut rng = seeded();
     // Strongest manipulable trace: injection scenario from T7
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
     // Underlying suppressed trace
-    for i in 1u8..=4 { for _ in 0..2 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        for _ in 0..2 {
+            pool.record_response(pid(i));
+        }
+    }
     // Injection: inflate response_total via record_response() without sample()
-    for i in 1u8..=4 { for _ in 0..2 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        for _ in 0..2 {
+            pool.record_response(pid(i));
+        }
+    }
 
     let snap = pool.operational_telemetry();
 
     // Confirm the strongest manipulation trace is in effect
-    assert_eq!(snap.recent_reported_response_ratio(), Some(1.0),
-        "injection masks Surface 3: ratio = 1.0 despite 50% underlying suppression");
-    assert_eq!(snap.liveness_weighted_kappa, 0.0,
-        "injection masks Surface 2: lwk = 0.0 despite underlying suppression");
+    assert_eq!(
+        snap.recent_reported_response_ratio(),
+        Some(1.0),
+        "injection masks Surface 3: ratio = 1.0 despite 50% underlying suppression"
+    );
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.0,
+        "injection masks Surface 2: lwk = 0.0 despite underlying suppression"
+    );
 
     // No automatic rotation triggered by manipulation trace
-    assert_eq!(pool.epoch_count(), 0,
-        "strongest manipulation trace must not trigger rotation: epoch_count = 0");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "strongest manipulation trace must not trigger rotation: epoch_count = 0"
+    );
 
     // No automatic policy action through the tested observation path.
     // This claim is scoped to the current implementation only; it does not claim

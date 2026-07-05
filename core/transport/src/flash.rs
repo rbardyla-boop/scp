@@ -1,15 +1,17 @@
-use crate::harness::{DevHarnessBurst, vitality_to_byte};
+use crate::harness::{vitality_to_byte, DevHarnessBurst};
 use crate::session::{FreshnessNonce, RouteId, SessionKey};
+use crate::state::StateProvider;
 use crate::transcript::{FlashTranscript, FlashTranscriptV2, TransportKeyMaterial};
 use rand_core::{OsRng, RngCore};
+use scp_cryptography::keys::{
+    x25519_dh, x25519_generate_keypair, PublicKey, SessionKey as CryptoSessionKey,
+};
 use scp_cryptography::{scp_derive_key, DomainLabel};
-use scp_cryptography::keys::{x25519_dh, x25519_generate_keypair, PublicKey, SessionKey as CryptoSessionKey};
 use scp_relay_cache::WarmCache;
 use scp_relay_mesh::{discover_relays, route_burst};
 use scp_relay_perturbation::PerturbationEngine;
-use scp_vitality::{VitalityEvidenceStore, VitalityState};
 use scp_vitality::SimVitalityEvaluationContext;
-use crate::state::StateProvider;
+use scp_vitality::{VitalityEvidenceStore, VitalityState};
 use scp_wire_format::signing::handshake_sig_message;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -41,9 +43,9 @@ pub struct FlashSession {
 /// is the continuity anchor; the handshake key is temporary transport capability.
 pub struct PublishedHandshakeKey {
     /// X25519 public key — input to sender-side DH.
-    pub pub_key:    [u8; 32],
+    pub pub_key: [u8; 32],
     /// Ed25519 sig by ops key over `handshake_sig_message(pub_key, expires_at)`.
-    pub sig:        [u8; 64],
+    pub sig: [u8; 64],
     /// Unix epoch seconds; key is invalid after this time.
     pub expires_at: u64,
 }
@@ -93,13 +95,8 @@ impl FlashSession {
             return Err(TransportError::RecipientRevoked);
         }
         let handshake_ephemeral = provider.get_handshake_ephemeral(recipient_ops_pub, ctx.now());
-        let vitality = vitality_store.compute_state(
-            ctx.consent_hash(),
-            ctx.now(),
-            ctx.i(),
-            ctx.r(),
-            ctx.p(),
-        );
+        let vitality =
+            vitality_store.compute_state(ctx.consent_hash(), ctx.now(), ctx.i(), ctx.r(), ctx.p());
         Ok(RecipientState {
             ops_pub: *recipient_ops_pub,
             vitality,
@@ -177,11 +174,11 @@ impl FlashSession {
         let env = maybe_env.ok_or(TransportError::V1PathNotReceivable)?;
         let burst = DevHarnessBurst {
             sender_ephemeral_pub: env.sender_ephemeral_pub,
-            route_id:             env.route_id.0,
-            freshness_nonce:      env.nonce.0,
-            vitality_byte:        vitality_to_byte(&env.vitality_snapshot),
-            enc_nonce:            env.enc_nonce,
-            ciphertext:           env.ciphertext,
+            route_id: env.route_id.0,
+            freshness_nonce: env.nonce.0,
+            vitality_byte: vitality_to_byte(&env.vitality_snapshot),
+            enc_nonce: env.enc_nonce,
+            ciphertext: env.ciphertext,
         };
         Ok((session, burst))
     }
@@ -208,7 +205,8 @@ impl FlashSession {
         cache: &WarmCache,
         engine: &PerturbationEngine,
     ) -> Result<(FlashSession, crate::corridor::BurstEnvelope), TransportError> {
-        let state = Self::retrieve_state_sim(provider, recipient_ops_pub, vitality_store, ctx).await?;
+        let state =
+            Self::retrieve_state_sim(provider, recipient_ops_pub, vitality_store, ctx).await?;
         let (session, maybe_env) =
             Self::open_and_send_core_at(state, payload, cache, engine, ctx.now()).await?;
         let env = maybe_env.ok_or(TransportError::V1PathNotReceivable)?;
@@ -279,11 +277,11 @@ impl FlashSession {
                 let dh_output = x25519_dh(&sender_secret, &hk.pub_key);
 
                 let transcript = FlashTranscriptV2 {
-                    route_id:             route.clone(),
-                    nonce:                nonce.clone(),
-                    recipient_ops_pub:    state.ops_pub,
-                    vitality_snapshot:    state.vitality.clone(),
-                    protocol_version:     2,
+                    route_id: route.clone(),
+                    nonce: nonce.clone(),
+                    recipient_ops_pub: state.ops_pub,
+                    vitality_snapshot: state.vitality.clone(),
+                    protocol_version: 2,
                     sender_ephemeral_pub: sender_pub,
                 };
 
@@ -295,11 +293,11 @@ impl FlashSession {
                 OsRng.fill_bytes(&mut seed);
 
                 let transcript = FlashTranscript {
-                    route_id:          route.clone(),
-                    nonce:             nonce.clone(),
+                    route_id: route.clone(),
+                    nonce: nonce.clone(),
                     recipient_ops_pub: state.ops_pub,
                     vitality_snapshot: state.vitality.clone(),
-                    protocol_version:  1,
+                    protocol_version: 1,
                 };
 
                 (seed, transcript.hash(), None)
@@ -312,7 +310,10 @@ impl FlashSession {
             recipient_binding: state.ops_pub,
         };
 
-        let session_key = SessionKey(scp_derive_key(DomainLabel::Transport, &key_material.as_bytes()));
+        let session_key = SessionKey(scp_derive_key(
+            DomainLabel::Transport,
+            &key_material.as_bytes(),
+        ));
 
         // Encrypt payload — retain enc_nonce for BurstEnvelope on the v2 path.
         let crypto_sk = CryptoSessionKey(session_key.0);
@@ -322,8 +323,12 @@ impl FlashSession {
         let normalized = engine.normalize_payload(&ciphertext);
         tokio::time::sleep(engine.jitter_delay()).await;
 
-        let relays = discover_relays().await.map_err(|_| TransportError::RoutingFailed)?;
-        route_burst(normalized, relays).await.map_err(|_| TransportError::TransmissionFailed)?;
+        let relays = discover_relays()
+            .await
+            .map_err(|_| TransportError::RoutingFailed)?;
+        route_burst(normalized, relays)
+            .await
+            .map_err(|_| TransportError::TransmissionFailed)?;
 
         // Warm cache retention (TTL 10 min).
         cache.retain(&route.0, &session_key.0);
@@ -334,9 +339,9 @@ impl FlashSession {
 
         // Capture values needed for the envelope before they move into FlashSession.
         let envelope_route_id = route.clone();
-        let envelope_nonce    = nonce.clone();
+        let envelope_nonce = nonce.clone();
         let envelope_vitality = state.vitality.clone();
-        let envelope_ops_pub  = state.ops_pub;
+        let envelope_ops_pub = state.ops_pub;
 
         let session = FlashSession {
             route,
@@ -348,13 +353,13 @@ impl FlashSession {
 
         let envelope = v2_sender_pub.map(|sender_pub| crate::corridor::BurstEnvelope {
             sender_ephemeral_pub: sender_pub,
-            route_id:             envelope_route_id,
-            nonce:                envelope_nonce,
-            vitality_snapshot:    envelope_vitality,
+            route_id: envelope_route_id,
+            nonce: envelope_nonce,
+            vitality_snapshot: envelope_vitality,
             ciphertext,
             enc_nonce,
-            recipient_ops_pub:    envelope_ops_pub,
-            protocol_version:     2,
+            recipient_ops_pub: envelope_ops_pub,
+            protocol_version: 2,
         });
 
         Ok((session, envelope))
@@ -413,16 +418,16 @@ impl RecipientState {
     pub fn commitment(&self) -> [u8; 32] {
         use blake3::Hasher;
         use scp_wire_format::constants::{
-            VITALITY_ACTIVE, VITALITY_BURNED, VITALITY_DORMANT,
-            VITALITY_SEVERED, VITALITY_SUSPENDED, VITALITY_WARM,
+            VITALITY_ACTIVE, VITALITY_BURNED, VITALITY_DORMANT, VITALITY_SEVERED,
+            VITALITY_SUSPENDED, VITALITY_WARM,
         };
         let vitality_byte = match self.vitality {
-            VitalityState::Active    => VITALITY_ACTIVE,
-            VitalityState::Warm      => VITALITY_WARM,
-            VitalityState::Dormant   => VITALITY_DORMANT,
+            VitalityState::Active => VITALITY_ACTIVE,
+            VitalityState::Warm => VITALITY_WARM,
+            VitalityState::Dormant => VITALITY_DORMANT,
             VitalityState::Suspended => VITALITY_SUSPENDED,
-            VitalityState::Severed   => VITALITY_SEVERED,
-            VitalityState::Burned    => VITALITY_BURNED,
+            VitalityState::Severed => VITALITY_SEVERED,
+            VitalityState::Burned => VITALITY_BURNED,
         };
         let mut h = Hasher::new();
         h.update(&self.ops_pub);
@@ -462,4 +467,3 @@ pub enum TransportError {
     #[error("v1 path (OsRng seed) cannot be decrypted by recipient — requires v2 bilateral DH")]
     V1PathNotReceivable,
 }
-

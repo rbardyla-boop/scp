@@ -1,24 +1,27 @@
-pub(crate) mod exposure;
-pub(crate) mod reputation;
-pub(crate) mod liveness;
+pub mod admission;
 pub(crate) mod dummy;
+pub(crate) mod eviction;
+pub(crate) mod exposure;
+pub(crate) mod liveness;
+pub mod metrics;
+pub(crate) mod reputation;
 pub(crate) mod rotation;
 pub(crate) mod sampling;
-pub(crate) mod eviction;
-pub mod metrics;
-pub mod admission;
 
-pub use exposure::{ExposureEstimate, ExposureDistribution, SelectionReceipt, AdmissibilityError};
-pub use reputation::{SemanticClassId, ClassReputation, ProviderReputation};
+pub use admission::{admission_challenge_message, AdmissionConfig, AdmissionError};
+pub use dummy::{DUMMY_QUERY_PROBABILITY, MAX_DUMMY_QUERIES_PER_MINUTE};
+pub use eviction::{EvictionConfig, EvictionError, EvictionReason, EvictionRecord};
+pub use exposure::{AdmissibilityError, ExposureDistribution, ExposureEstimate, SelectionReceipt};
+pub use metrics::{
+    epoch_similarity, exposure_divergence, ConvergencePressure, EpochPhase,
+    OperationalTelemetrySnapshot,
+};
+pub use reputation::{ClassReputation, ProviderReputation, SemanticClassId};
 pub use rotation::{
-    ActivationStrategy, ChurnBudget, DeferralReason, ExposureResetPolicy,
-    PoolRotationPolicy, RotationCooldown, RotationOutcome,
+    ActivationStrategy, ChurnBudget, DeferralReason, ExposureResetPolicy, PoolRotationPolicy,
+    RotationCooldown, RotationOutcome,
 };
 pub use sampling::SamplingStrategy;
-pub use dummy::{DUMMY_QUERY_PROBABILITY, MAX_DUMMY_QUERIES_PER_MINUTE};
-pub use metrics::{epoch_similarity, exposure_divergence, ConvergencePressure, EpochPhase, OperationalTelemetrySnapshot};
-pub use admission::{AdmissionConfig, AdmissionError, admission_challenge_message};
-pub use eviction::{EvictionConfig, EvictionError, EvictionReason, EvictionRecord};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -28,10 +31,10 @@ use rand_core::RngCore;
 use scp_transport::quorum::EquivocationEvidence;
 use scp_transport::{ProviderQuorum, StateProvider};
 
+use dummy::DummyQueryBudget;
 use eviction::EvictionState;
 use exposure::{AdmissibleExposureTracker, ExposureTracker};
 use liveness::{LivenessConfig, LivenessState};
-use dummy::DummyQueryBudget;
 use rotation::PoolRotation;
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -40,10 +43,15 @@ use rotation::PoolRotation;
 /// non-zero cooldown. A missing cooldown creates a rotation loop: κ=1.0 after reset →
 /// accumulated exceeds threshold on the first call → rotation → reset → repeat.
 fn assert_integral_safety(policy: &PoolRotationPolicy, cooldown: &Option<RotationCooldown>) {
-    if let PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure } = policy {
+    if let PoolRotationPolicy::IntegralTriggered {
+        max_accumulated_pressure,
+    } = policy
+    {
         if *max_accumulated_pressure < 1.0 {
             assert!(
-                cooldown.as_ref().map_or(false, |cd| cd.min_duration > Duration::ZERO),
+                cooldown
+                    .as_ref()
+                    .is_some_and(|cd| cd.min_duration > Duration::ZERO),
                 "IntegralTriggered with max_accumulated_pressure < 1.0 requires a \
                  non-zero cooldown to prevent rotation loops; call .with_cooldown(duration)"
             );
@@ -77,9 +85,13 @@ fn is_admissible(phase: EpochPhase, policy: &PoolRotationPolicy) -> bool {
 /// Uses symmetry C(n,k)=C(n,n-k) to reduce the iteration count.
 /// Returns 0.0 for k=0, k=n, or k>n (log₂(1)=0 and edge-case guard).
 fn log2_binom(n: usize, k: usize) -> f64 {
-    if k == 0 || k > n { return 0.0; }
+    if k == 0 || k > n {
+        return 0.0;
+    }
     let k = k.min(n - k);
-    (0..k).map(|i| ((n - i) as f64 / (i + 1) as f64).log2()).sum()
+    (0..k)
+        .map(|i| ((n - i) as f64 / (i + 1) as f64).log2())
+        .sum()
 }
 
 /// Lemire's nearly-divisionless uniform integer in [0, range).
@@ -116,20 +128,20 @@ pub(crate) fn now_secs() -> u64 {
 /// `active_window = usize::MAX` (default): all providers go to active, rotation
 /// is a no-op, and behavior is identical to Phase 12–13.
 pub struct ProviderPool<P> {
-    active:             Vec<([u8; 32], P)>,
-    dormant:            Vec<([u8; 32], P)>,
-    active_window:      usize,
-    strategy:           SamplingStrategy,
-    rotation:           PoolRotation,
-    reputation:         ProviderReputation,
-    dummy_budget:       Arc<Mutex<DummyQueryBudget>>,
-    exposure_tracker:   Arc<Mutex<ExposureTracker>>,
-    liveness:           HashMap<[u8; 32], LivenessState>,
-    liveness_config:    LivenessConfig,
-    tick_jitter_max:    Duration,
+    active: Vec<([u8; 32], P)>,
+    dormant: Vec<([u8; 32], P)>,
+    active_window: usize,
+    strategy: SamplingStrategy,
+    rotation: PoolRotation,
+    reputation: ProviderReputation,
+    dummy_budget: Arc<Mutex<DummyQueryBudget>>,
+    exposure_tracker: Arc<Mutex<ExposureTracker>>,
+    liveness: HashMap<[u8; 32], LivenessState>,
+    liveness_config: LivenessConfig,
+    tick_jitter_max: Duration,
     tick_next_deadline: Instant,
-    admission:          Option<admission::AdmissionState>,
-    eviction:           Option<EvictionState>,
+    admission: Option<admission::AdmissionState>,
+    eviction: Option<EvictionState>,
     /// Opt-in admissible paired-outcome tracker. `None` by default.
     /// Populated only after `with_admissible_tracking()` is called.
     admissible_tracker: Option<AdmissibleExposureTracker>,
@@ -143,33 +155,36 @@ impl<P> ProviderPool<P> {
             active_window: usize::MAX,
             strategy,
             rotation: PoolRotation {
-                policy:                PoolRotationPolicy::Manual,
-                budget:                ChurnBudget { min_churn: 1, max_churn: 1 },
-                query_count:           0,
-                last_rotation:         Instant::now(),
-                activation:            ActivationStrategy::Uniform,
-                reset_policy:          ExposureResetPolicy::Never,
-                epoch_count:           0,
+                policy: PoolRotationPolicy::Manual,
+                budget: ChurnBudget {
+                    min_churn: 1,
+                    max_churn: 1,
+                },
+                query_count: 0,
+                last_rotation: Instant::now(),
+                activation: ActivationStrategy::Uniform,
+                reset_policy: ExposureResetPolicy::Never,
+                epoch_count: 0,
                 previous_distribution: None,
-                previous_kappa:        None,
-                last_churn:            None,
-                accumulated_kappa:        0.0,
-                cooldown:                 None,
-                burst_response_deadline:  None,
+                previous_kappa: None,
+                last_churn: None,
+                accumulated_kappa: 0.0,
+                cooldown: None,
+                burst_response_deadline: None,
             },
-            reputation:       ProviderReputation::new(),
-            dummy_budget:     Arc::new(Mutex::new(DummyQueryBudget::new())),
+            reputation: ProviderReputation::new(),
+            dummy_budget: Arc::new(Mutex::new(DummyQueryBudget::new())),
             exposure_tracker: Arc::new(Mutex::new(ExposureTracker::new())),
-            liveness:         HashMap::new(),
-            liveness_config:  LivenessConfig {
+            liveness: HashMap::new(),
+            liveness_config: LivenessConfig {
                 max_consecutive_failures: u32::MAX,
-                max_silence_secs:         u64::MAX,
+                max_silence_secs: u64::MAX,
             },
-            tick_jitter_max:      Duration::ZERO,
-            tick_next_deadline:   Instant::now(),
-            admission:            None,
-            eviction:             None,
-            admissible_tracker:   None,
+            tick_jitter_max: Duration::ZERO,
+            tick_next_deadline: Instant::now(),
+            admission: None,
+            eviction: None,
+            admissible_tracker: None,
         }
     }
 
@@ -236,7 +251,10 @@ impl<P> ProviderPool<P> {
     /// OR `now - last_seen_secs >= max_silence_secs`. Dead providers are excluded
     /// from `sample()` until `record_response()` is called.
     pub fn with_liveness(mut self, max_consecutive_failures: u32, max_silence_secs: u64) -> Self {
-        self.liveness_config = LivenessConfig { max_consecutive_failures, max_silence_secs };
+        self.liveness_config = LivenessConfig {
+            max_consecutive_failures,
+            max_silence_secs,
+        };
         self
     }
 
@@ -283,7 +301,10 @@ impl<P> ProviderPool<P> {
     /// The admissible tracker inherits the pool's current exposure reset policy.
     pub fn with_admissible_tracking(mut self, max_outstanding_receipts: usize) -> Self {
         let reset_policy = self.rotation.reset_policy.clone();
-        self.admissible_tracker = Some(AdmissibleExposureTracker::new(reset_policy, max_outstanding_receipts));
+        self.admissible_tracker = Some(AdmissibleExposureTracker::new(
+            reset_policy,
+            max_outstanding_receipts,
+        ));
         self
     }
 
@@ -325,10 +346,13 @@ impl<P> ProviderPool<P> {
         }
         let mut challenge = [0u8; 32];
         rand_core::OsRng.fill_bytes(&mut challenge);
-        admission.pending.insert(provider_id, admission::PendingAdmission {
-            challenge,
-            issued_at: std::time::Instant::now(),
-        });
+        admission.pending.insert(
+            provider_id,
+            admission::PendingAdmission {
+                challenge,
+                issued_at: std::time::Instant::now(),
+            },
+        );
         Ok(challenge)
     }
 
@@ -348,11 +372,18 @@ impl<P> ProviderPool<P> {
     ) -> Result<(), AdmissionError> {
         // Verification phase — immutable borrow of self.admission.
         {
-            let admission = self.admission.as_ref().ok_or(AdmissionError::NotConfigured)?;
+            let admission = self
+                .admission
+                .as_ref()
+                .ok_or(AdmissionError::NotConfigured)?;
             admission.verify(&provider_id, sig)?;
         }
         // Remove the consumed challenge.
-        self.admission.as_mut().unwrap().pending.remove(&provider_id);
+        self.admission
+            .as_mut()
+            .unwrap()
+            .pending
+            .remove(&provider_id);
         // If the provider was previously evicted, increment the lifetime re-admission counter.
         if let Some(eviction) = self.eviction.as_mut() {
             eviction.record_readmission(&provider_id);
@@ -380,13 +411,13 @@ impl<P> ProviderPool<P> {
     pub fn evict(
         &mut self,
         provider_id: &[u8; 32],
-        reason:      eviction::EvictionReason,
+        reason: eviction::EvictionReason,
     ) -> Result<(), eviction::EvictionError> {
         if self.eviction.is_none() {
             return Err(eviction::EvictionError::NotConfigured);
         }
 
-        let in_active  = self.active.iter().position(|(id, _)| id == provider_id);
+        let in_active = self.active.iter().position(|(id, _)| id == provider_id);
         let in_dormant = if in_active.is_none() {
             self.dormant.iter().position(|(id, _)| id == provider_id)
         } else {
@@ -399,10 +430,11 @@ impl<P> ProviderPool<P> {
 
         // Floor gate [POOL-5]: only applies when removing from dormant and rotation is
         // configured (active_window != usize::MAX means rotation is a real constraint).
-        if in_dormant.is_some() && self.active_window != usize::MAX {
-            if self.dormant.len().saturating_sub(1) < self.active_window {
-                return Err(eviction::EvictionError::WouldViolateDormantFloor);
-            }
+        if in_dormant.is_some()
+            && self.active_window != usize::MAX
+            && self.dormant.len().saturating_sub(1) < self.active_window
+        {
+            return Err(eviction::EvictionError::WouldViolateDormantFloor);
         }
 
         // Remove from whichever tier holds the provider.
@@ -416,7 +448,10 @@ impl<P> ProviderPool<P> {
         self.liveness.remove(provider_id);
 
         // Record the eviction.
-        self.eviction.as_mut().unwrap().record_eviction(*provider_id, reason, now_secs());
+        self.eviction
+            .as_mut()
+            .unwrap()
+            .record_eviction(*provider_id, reason, now_secs());
 
         Ok(())
     }
@@ -426,7 +461,9 @@ impl<P> ProviderPool<P> {
     /// Returns `true` if a ban record was found and removed, `false` if no ban exists
     /// or eviction is not configured. After lifting, `request_admission()` may proceed.
     pub fn lift_eviction_ban(&mut self, provider_id: &[u8; 32]) -> bool {
-        self.eviction.as_mut().map_or(false, |e| e.lift_ban(provider_id))
+        self.eviction
+            .as_mut()
+            .is_some_and(|e| e.lift_ban(provider_id))
     }
 
     /// Inspect a provider's eviction record. Returns `None` if the provider has never
@@ -452,7 +489,10 @@ impl<P> ProviderPool<P> {
         });
         entry.last_seen_secs = now_secs();
         entry.consecutive_failures = 0;
-        self.exposure_tracker.lock().unwrap().record_response(&provider_id);
+        self.exposure_tracker
+            .lock()
+            .unwrap()
+            .record_response(&provider_id);
     }
 
     /// Record a failed or unresponsive query to a provider.
@@ -475,7 +515,10 @@ impl<P> ProviderPool<P> {
     /// Returns `Ok(())` when the receipt passes all admissibility conditions.
     /// Returns `Err(AdmissibilityError::NotConfigured)` when `with_admissible_tracking()`
     /// was not called on this pool.
-    pub fn record_admissible_response(&mut self, receipt: &SelectionReceipt) -> Result<(), AdmissibilityError> {
+    pub fn record_admissible_response(
+        &mut self,
+        receipt: &SelectionReceipt,
+    ) -> Result<(), AdmissibilityError> {
         match self.admissible_tracker.as_mut() {
             None => Err(AdmissibilityError::NotConfigured),
             Some(adm) => adm.record_admissible_response(receipt),
@@ -491,7 +534,10 @@ impl<P> ProviderPool<P> {
     /// Returns `Ok(())` when the receipt passes all admissibility conditions.
     /// Returns `Err(AdmissibilityError::NotConfigured)` when `with_admissible_tracking()`
     /// was not called on this pool.
-    pub fn record_admissible_failure(&mut self, receipt: &SelectionReceipt) -> Result<(), AdmissibilityError> {
+    pub fn record_admissible_failure(
+        &mut self,
+        receipt: &SelectionReceipt,
+    ) -> Result<(), AdmissibilityError> {
         match self.admissible_tracker.as_mut() {
             None => Err(AdmissibilityError::NotConfigured),
             Some(adm) => adm.record_admissible_failure(receipt),
@@ -505,7 +551,8 @@ impl<P> ProviderPool<P> {
         class: &SemanticClassId,
         now: u64,
     ) -> f64 {
-        self.reputation.effective_equivocation_count_at(&provider_id, class, now)
+        self.reputation
+            .effective_equivocation_count_at(&provider_id, class, now)
     }
 
     fn is_live(&self, provider_id: &[u8; 32]) -> bool {
@@ -613,8 +660,7 @@ impl<P> ProviderPool<P> {
         let smoothed_kappa = if n <= 1 {
             1.0
         } else {
-            (1.0 - estimate.smoothed_selection_entropy_bits / (n as f64).log2())
-                .clamp(0.0, 1.0)
+            (1.0 - estimate.smoothed_selection_entropy_bits / (n as f64).log2()).clamp(0.0, 1.0)
         };
         let liveness_weighted_kappa = if n <= 1 {
             1.0
@@ -640,16 +686,18 @@ impl<P> ProviderPool<P> {
                 Some(n_total.saturating_sub(estimate.total_samples))
             }
         };
-        let epoch_divergence = self.rotation.previous_distribution.as_ref().map(|prev| {
-            exposure_divergence(&distribution.rates, prev)
-        });
+        let epoch_divergence = self
+            .rotation
+            .previous_distribution
+            .as_ref()
+            .map(|prev| exposure_divergence(&distribution.rates, prev));
         let kappa_velocity = self.rotation.previous_kappa.map(|pk| kappa - pk);
         let d = self.dormant.len();
         let transition_entropy = if n == 0 || d == 0 {
             None
         } else {
-            let k_mean = (self.rotation.budget.min_churn + self.rotation.budget.max_churn)
-                as f64 / 2.0;
+            let k_mean =
+                (self.rotation.budget.min_churn + self.rotation.budget.max_churn) as f64 / 2.0;
             let k = (k_mean.round() as usize).min(n).min(d);
             Some(log2_binom(n, k) + log2_binom(d, k))
         };
@@ -747,7 +795,12 @@ impl<P> ProviderPool<P> {
             }
         }
         let epoch_phase = {
-            let ts = self.exposure_tracker.lock().unwrap().estimate().total_samples;
+            let ts = self
+                .exposure_tracker
+                .lock()
+                .unwrap()
+                .estimate()
+                .total_samples;
             EpochPhase::for_pool(ts, n)
         };
         if !is_admissible(epoch_phase, &self.rotation.policy) {
@@ -759,22 +812,31 @@ impl<P> ProviderPool<P> {
                 self.rotation.query_count += 1;
                 self.rotation.query_count >= *n
             }
-            PoolRotationPolicy::TimeBased(d) => {
-                self.rotation.last_rotation.elapsed() >= *d
-            }
-            PoolRotationPolicy::Hybrid { query_count, max_age } => {
+            PoolRotationPolicy::TimeBased(d) => self.rotation.last_rotation.elapsed() >= *d,
+            PoolRotationPolicy::Hybrid {
+                query_count,
+                max_age,
+            } => {
                 self.rotation.query_count += 1;
                 self.rotation.query_count >= *query_count
                     || self.rotation.last_rotation.elapsed() >= *max_age
             }
             PoolRotationPolicy::EntropyTriggered { min_entropy_bits } => {
                 // Use smoothed entropy to prevent thrashing after a reset.
-                self.exposure_tracker.lock().unwrap().estimate()
-                    .smoothed_selection_entropy_bits < *min_entropy_bits
+                self.exposure_tracker
+                    .lock()
+                    .unwrap()
+                    .estimate()
+                    .smoothed_selection_entropy_bits
+                    < *min_entropy_bits
             }
-            PoolRotationPolicy::JitteredTimeBased { base, jitter_fraction } => {
+            PoolRotationPolicy::JitteredTimeBased {
+                base,
+                jitter_fraction,
+            } => {
                 let elapsed = self.rotation.last_rotation.elapsed();
-                let jitter_secs = base.as_secs_f64() * jitter_fraction
+                let jitter_secs = base.as_secs_f64()
+                    * jitter_fraction
                     * (rng.next_u64() as f64 / u64::MAX as f64);
                 let threshold = *base + Duration::from_secs_f64(jitter_secs);
                 elapsed >= threshold
@@ -789,18 +851,22 @@ impl<P> ProviderPool<P> {
             PoolRotationPolicy::ConvergenceTriggered { max_kappa } => {
                 self.convergence_pressure().kappa > *max_kappa
             }
-            PoolRotationPolicy::VelocityTriggered { max_velocity } => {
-                self.convergence_pressure()
-                    .kappa_velocity
-                    .map_or(false, |v| v > *max_velocity)
-            }
-            PoolRotationPolicy::IntegralTriggered { max_accumulated_pressure } => {
+            PoolRotationPolicy::VelocityTriggered { max_velocity } => self
+                .convergence_pressure()
+                .kappa_velocity
+                .is_some_and(|v| v > *max_velocity),
+            PoolRotationPolicy::IntegralTriggered {
+                max_accumulated_pressure,
+            } => {
                 let max = *max_accumulated_pressure;
                 let kappa = self.convergence_pressure().kappa;
                 self.rotation.accumulated_kappa += kappa;
                 self.rotation.accumulated_kappa > max
             }
-            PoolRotationPolicy::BurstTriggered { min_burst_magnitude, response_jitter_max } => {
+            PoolRotationPolicy::BurstTriggered {
+                min_burst_magnitude,
+                response_jitter_max,
+            } => {
                 let pressure = self.convergence_pressure();
                 let burst = pressure.kappa - pressure.smoothed_kappa;
                 let max_jitter = *response_jitter_max;
@@ -862,27 +928,37 @@ impl<P> ProviderPool<P> {
     }
 
     /// Number of providers in the active window.
-    pub fn active_count(&self) -> usize { self.active.len() }
+    pub fn active_count(&self) -> usize {
+        self.active.len()
+    }
 
     /// Number of providers in the dormant tier.
-    pub fn dormant_count(&self) -> usize { self.dormant.len() }
+    pub fn dormant_count(&self) -> usize {
+        self.dormant.len()
+    }
 
     /// Current normalized convergence pressure κ ∈ [0.0, 1.0].
     ///
     /// Bounded diagnostic — discloses κ without exposing `EpochPhase` or `DeferralReason`.
-    pub fn kappa(&self) -> f64 { self.convergence_pressure().kappa }
+    pub fn kappa(&self) -> f64 {
+        self.convergence_pressure().kappa
+    }
 
     fn do_rotate(&mut self, rng: &mut impl RngCore) {
-        let max_possible = self.rotation.budget.max_churn
+        let max_possible = self
+            .rotation
+            .budget
+            .max_churn
             .min(self.active.len())
             .min(self.dormant.len());
         let min_possible = self.rotation.budget.min_churn.min(max_possible);
         let spread = (max_possible - min_possible) as u64;
-        let n = min_possible + if spread == 0 {
-            0
-        } else {
-            lemire_uniform(rng, spread + 1) as usize
-        };
+        let n = min_possible
+            + if spread == 0 {
+                0
+            } else {
+                lemire_uniform(rng, spread + 1) as usize
+            };
 
         // Record actual churn and end-of-epoch κ for trajectory metrics in the next epoch.
         self.rotation.last_churn = Some(n);
@@ -903,10 +979,13 @@ impl<P> ProviderPool<P> {
                 }
                 ActivationStrategy::WeightedByReputation { influence, floor } => {
                     let (influence, floor) = (*influence, *floor);
-                    let weights: Vec<f64> = self.dormant.iter()
+                    let weights: Vec<f64> = self
+                        .dormant
+                        .iter()
                         .map(|(pid, _)| {
                             let eq = self.reputation.effective_equivocation_count(
-                                pid, &SemanticClassId::ConsensusRelevant,
+                                pid,
+                                &SemanticClassId::ConsensusRelevant,
                             );
                             (1.0 / (1.0 + influence * eq)).max(floor)
                         })
@@ -917,20 +996,34 @@ impl<P> ProviderPool<P> {
                     let mut sel = self.dormant.len() - 1;
                     for (idx, &w) in weights.iter().enumerate() {
                         cumulative += w;
-                        if u < cumulative { sel = idx; break; }
+                        if u < cumulative {
+                            sel = idx;
+                            break;
+                        }
                     }
                     sel
                 }
-                ActivationStrategy::WeightedComposite { influence, floor, liveness_discount } => {
+                ActivationStrategy::WeightedComposite {
+                    influence,
+                    floor,
+                    liveness_discount,
+                } => {
                     let (influence, floor, liveness_discount) =
                         (*influence, *floor, *liveness_discount);
-                    let weights: Vec<f64> = self.dormant.iter()
+                    let weights: Vec<f64> = self
+                        .dormant
+                        .iter()
                         .map(|(pid, _)| {
                             let eq = self.reputation.effective_equivocation_count(
-                                pid, &SemanticClassId::ConsensusRelevant,
+                                pid,
+                                &SemanticClassId::ConsensusRelevant,
                             );
                             let rep_weight = (1.0 / (1.0 + influence * eq)).max(floor);
-                            let lf = if self.is_live(pid) { 1.0 } else { liveness_discount };
+                            let lf = if self.is_live(pid) {
+                                1.0
+                            } else {
+                                liveness_discount
+                            };
                             rep_weight * lf
                         })
                         .collect();
@@ -944,19 +1037,29 @@ impl<P> ProviderPool<P> {
                         let mut sel = self.dormant.len() - 1;
                         for (idx, &w) in weights.iter().enumerate() {
                             cumulative += w;
-                            if u < cumulative { sel = idx; break; }
+                            if u < cumulative {
+                                sel = idx;
+                                break;
+                            }
                         }
                         sel
                     }
                 }
-                ActivationStrategy::VisibilityCapped { max_visibility_ratio, floor } => {
+                ActivationStrategy::VisibilityCapped {
+                    max_visibility_ratio,
+                    floor,
+                } => {
                     let (cap, floor) = (*max_visibility_ratio, *floor);
                     // Lock tracker, collect rates, then release before weighted selection.
                     let rates: Vec<f64> = {
                         let tracker = self.exposure_tracker.lock().unwrap();
-                        self.dormant.iter().map(|(pid, _)| tracker.rate(pid)).collect()
+                        self.dormant
+                            .iter()
+                            .map(|(pid, _)| tracker.rate(pid))
+                            .collect()
                     };
-                    let weights: Vec<f64> = rates.iter()
+                    let weights: Vec<f64> = rates
+                        .iter()
                         .map(|&rate| (cap / rate.max(cap * 1e-6)).min(1.0).max(floor))
                         .collect();
                     let total: f64 = weights.iter().sum();
@@ -965,7 +1068,10 @@ impl<P> ProviderPool<P> {
                     let mut sel = self.dormant.len() - 1;
                     for (idx, &w) in weights.iter().enumerate() {
                         cumulative += w;
-                        if u < cumulative { sel = idx; break; }
+                        if u < cumulative {
+                            sel = idx;
+                            break;
+                        }
                     }
                     sel
                 }
@@ -985,9 +1091,9 @@ impl<P> ProviderPool<P> {
         self.rotation.epoch_count = self.rotation.epoch_count.saturating_add(1);
 
         let should_reset = match &self.rotation.reset_policy {
-            ExposureResetPolicy::Never            => false,
-            ExposureResetPolicy::OnRotation       => true,
-            ExposureResetPolicy::AfterEpochs { n } => self.rotation.epoch_count % n == 0,
+            ExposureResetPolicy::Never => false,
+            ExposureResetPolicy::OnRotation => true,
+            ExposureResetPolicy::AfterEpochs { n } => self.rotation.epoch_count.is_multiple_of(*n),
         };
         if should_reset {
             self.exposure_tracker.lock().unwrap().reset();
@@ -1032,7 +1138,9 @@ impl<P: Clone> ProviderPool<P> {
 
         let selected: Vec<([u8; 32], P)> = match &self.strategy {
             SamplingStrategy::RandomK(k) => {
-                if n == 0 { return Vec::new(); }
+                if n == 0 {
+                    return Vec::new();
+                }
                 let k = (*k).min(n);
                 let mut live = live_indices.clone();
                 for i in 0..k {
@@ -1045,16 +1153,23 @@ impl<P: Clone> ProviderPool<P> {
                     .collect()
             }
 
-            SamplingStrategy::WeightedByReputation { k, influence, floor } => {
-                if n == 0 { return Vec::new(); }
+            SamplingStrategy::WeightedByReputation {
+                k,
+                influence,
+                floor,
+            } => {
+                if n == 0 {
+                    return Vec::new();
+                }
                 let k = (*k).min(n);
                 let (influence, floor) = (*influence, *floor);
-                let mut available: Vec<(usize, f64)> = live_indices.iter()
+                let mut available: Vec<(usize, f64)> = live_indices
+                    .iter()
                     .map(|&i| {
                         let (pid, _) = &self.active[i];
-                        let eq = self.reputation.effective_equivocation_count(
-                            pid, &SemanticClassId::ConsensusRelevant,
-                        );
+                        let eq = self
+                            .reputation
+                            .effective_equivocation_count(pid, &SemanticClassId::ConsensusRelevant);
                         (i, (1.0 / (1.0 + influence * eq)).max(floor))
                     })
                     .collect();
@@ -1082,7 +1197,9 @@ impl<P: Clone> ProviderPool<P> {
             }
 
             SamplingStrategy::Threshold { min_k, max_k } => {
-                if n == 0 { return Vec::new(); }
+                if n == 0 {
+                    return Vec::new();
+                }
                 let k = (*max_k).min(n).max((*min_k).min(n));
                 let mut live = live_indices.clone();
                 for i in 0..k {
@@ -1095,21 +1212,30 @@ impl<P: Clone> ProviderPool<P> {
                     .collect()
             }
 
-            SamplingStrategy::WeightedComposite { k, influence, floor, liveness_discount } => {
+            SamplingStrategy::WeightedComposite {
+                k,
+                influence,
+                floor,
+                liveness_discount,
+            } => {
                 // Does NOT pre-filter to live_indices — all active providers compete.
                 // Dead providers receive weight multiplied by liveness_discount.
                 let total_active = self.active.len();
-                if total_active == 0 { return Vec::new(); }
+                if total_active == 0 {
+                    return Vec::new();
+                }
                 let k = (*k).min(total_active);
                 let (influence, floor, ld) = (*influence, *floor, *liveness_discount);
-                if k == 0 { return Vec::new(); }
+                if k == 0 {
+                    return Vec::new();
+                }
 
                 let mut available: Vec<(usize, f64)> = (0..total_active)
                     .map(|i| {
                         let (pid, _) = &self.active[i];
-                        let eq = self.reputation.effective_equivocation_count(
-                            pid, &SemanticClassId::ConsensusRelevant,
-                        );
+                        let eq = self
+                            .reputation
+                            .effective_equivocation_count(pid, &SemanticClassId::ConsensusRelevant);
                         let rep_w = (1.0 / (1.0 + influence * eq)).max(floor);
                         let lf = if self.is_live(pid) { 1.0 } else { ld };
                         (i, rep_w * lf)
@@ -1119,16 +1245,24 @@ impl<P: Clone> ProviderPool<P> {
                 let mut s = Vec::with_capacity(k);
                 for _ in 0..k {
                     let total: f64 = available.iter().map(|(_, w)| w).sum();
-                    if total <= 0.0 { break; }
+                    if total <= 0.0 {
+                        break;
+                    }
                     let u = (rng.next_u64() as f64 / u64::MAX as f64) * total;
                     let mut cumulative = 0.0;
                     let mut sel = available.len() - 1;
                     for (j, (_, w)) in available.iter().enumerate() {
                         cumulative += w;
-                        if u < cumulative { sel = j; break; }
+                        if u < cumulative {
+                            sel = j;
+                            break;
+                        }
                     }
                     let (provider_idx, _) = available.swap_remove(sel);
-                    s.push((self.active[provider_idx].0, self.active[provider_idx].1.clone()));
+                    s.push((
+                        self.active[provider_idx].0,
+                        self.active[provider_idx].1.clone(),
+                    ));
                 }
                 s
             }
@@ -1268,7 +1402,12 @@ impl<P: Clone + StateProvider> ProviderPool<P> {
     /// When the most-exposed provider dominates samples (`max_selection_rate → 1.0`),
     /// dummy probability triples to mask that signal. Clamped to `[0.01, 0.20]`.
     pub fn effective_dummy_probability(&self) -> f64 {
-        let max_rate = self.exposure_tracker.lock().unwrap().estimate().max_selection_rate;
+        let max_rate = self
+            .exposure_tracker
+            .lock()
+            .unwrap()
+            .estimate()
+            .max_selection_rate;
         (DUMMY_QUERY_PROBABILITY * (1.0 + 2.0 * max_rate)).clamp(0.01, 0.20)
     }
 

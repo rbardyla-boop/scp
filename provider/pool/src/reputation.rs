@@ -16,19 +16,23 @@ pub struct ClassReputation {
 }
 
 pub struct ProviderReputation {
-    pub(crate) records:         HashMap<([u8; 32], SemanticClassId), ClassReputation>,
-    pub(crate) half_life_secs:  Option<u64>,
+    pub(crate) records: HashMap<([u8; 32], SemanticClassId), ClassReputation>,
+    pub(crate) half_life_secs: Option<u64>,
 }
 
 impl ProviderReputation {
     pub fn new() -> Self {
-        Self { records: HashMap::new(), half_life_secs: None }
+        Self {
+            records: HashMap::new(),
+            half_life_secs: None,
+        }
     }
 
     pub fn record_equivocation(&mut self, evidence: &EquivocationEvidence) {
         let now = crate::now_secs();
         for id in [evidence.provider_a_id, evidence.provider_b_id] {
-            let rep = self.records
+            let rep = self
+                .records
                 .entry((id, SemanticClassId::ConsensusRelevant))
                 .or_default();
             rep.equivocations += 1;
@@ -58,7 +62,9 @@ impl ProviderReputation {
         now: u64,
     ) -> f64 {
         let rep = self.query(provider_id, class);
-        if rep.equivocations == 0 { return 0.0; }
+        if rep.equivocations == 0 {
+            return 0.0;
+        }
         match self.half_life_secs {
             None | Some(0) => rep.equivocations as f64,
             Some(half_life) => {

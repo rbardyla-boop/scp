@@ -2,7 +2,9 @@ pub mod bootstrap;
 
 use bootstrap::BootstrapConfig;
 use scp_wire_format::constants::{NOISE_PARAMS, RELAY_ACK_BYTE};
-use scp_wire_format::framing::{decode_noise_length, decode_tcp_length, encode_noise_frame, encode_tcp_frame};
+use scp_wire_format::framing::{
+    decode_noise_length, decode_tcp_length, encode_noise_frame, encode_tcp_frame,
+};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
@@ -29,24 +31,30 @@ pub struct BlindRelay {
 
 impl BlindRelay {
     pub fn local() -> Self {
-        Self { inner: RelayTransport::Local }
+        Self {
+            inner: RelayTransport::Local,
+        }
     }
 
     pub fn tcp(addr: SocketAddr) -> Self {
-        Self { inner: RelayTransport::Tcp(addr) }
+        Self {
+            inner: RelayTransport::Tcp(addr),
+        }
     }
 
     /// Phase 4 Noise-encrypted relay. Generates a fresh Noise static key per
     /// forward() call, so no two bursts share a transport identity.
     pub fn noise(addr: SocketAddr) -> Self {
-        Self { inner: RelayTransport::Noise(addr) }
+        Self {
+            inner: RelayTransport::Noise(addr),
+        }
     }
 
     /// Forward opaque payload. Relay sees bytes only — no semantic access.
     pub async fn forward(&self, payload: &[u8]) -> Result<(), MeshError> {
         match &self.inner {
-            RelayTransport::Local      => Ok(()),
-            RelayTransport::Tcp(addr)  => tcp_forward(payload, *addr).await,
+            RelayTransport::Local => Ok(()),
+            RelayTransport::Tcp(addr) => tcp_forward(payload, *addr).await,
             RelayTransport::Noise(addr) => noise_forward(payload, *addr).await,
         }
     }
@@ -58,10 +66,18 @@ async fn tcp_forward(payload: &[u8], addr: SocketAddr) -> Result<(), MeshError> 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
-    let mut stream = TcpStream::connect(addr).await.map_err(|_| MeshError::RelayRefused)?;
-    stream.write_all(&encode_tcp_frame(payload)).await.map_err(|_| MeshError::Timeout)?;
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .map_err(|_| MeshError::RelayRefused)?;
+    stream
+        .write_all(&encode_tcp_frame(payload))
+        .await
+        .map_err(|_| MeshError::Timeout)?;
     let mut ack = [0u8; 1];
-    stream.read_exact(&mut ack).await.map_err(|_| MeshError::Timeout)?;
+    stream
+        .read_exact(&mut ack)
+        .await
+        .map_err(|_| MeshError::Timeout)?;
     if ack[0] != RELAY_ACK_BYTE {
         return Err(MeshError::RelayRefused);
     }
@@ -76,7 +92,10 @@ async fn write_noise_msg(
     msg: &[u8],
 ) -> Result<(), MeshError> {
     use tokio::io::AsyncWriteExt;
-    stream.write_all(&encode_noise_frame(msg)).await.map_err(|_| MeshError::Timeout)?;
+    stream
+        .write_all(&encode_noise_frame(msg))
+        .await
+        .map_err(|_| MeshError::Timeout)?;
     Ok(())
 }
 
@@ -87,9 +106,15 @@ async fn read_noise_msg(
 ) -> Result<usize, MeshError> {
     use tokio::io::AsyncReadExt;
     let mut len_bytes = [0u8; 2];
-    stream.read_exact(&mut len_bytes).await.map_err(|_| MeshError::Timeout)?;
+    stream
+        .read_exact(&mut len_bytes)
+        .await
+        .map_err(|_| MeshError::Timeout)?;
     let len = decode_noise_length(&len_bytes);
-    stream.read_exact(&mut buf[..len]).await.map_err(|_| MeshError::Timeout)?;
+    stream
+        .read_exact(&mut buf[..len])
+        .await
+        .map_err(|_| MeshError::Timeout)?;
     Ok(len)
 }
 
@@ -111,33 +136,47 @@ async fn noise_forward(payload: &[u8], addr: SocketAddr) -> Result<(), MeshError
         .build_initiator()
         .map_err(|_| MeshError::RelayRefused)?;
 
-    let mut stream = TcpStream::connect(addr).await.map_err(|_| MeshError::RelayRefused)?;
+    let mut stream = TcpStream::connect(addr)
+        .await
+        .map_err(|_| MeshError::RelayRefused)?;
     let mut tx = vec![0u8; 65535];
     let mut rx = vec![0u8; 65535];
 
     // Noise XX handshake — 3 messages.
     // -> e
-    let len = noise.write_message(&[], &mut tx).map_err(|_| MeshError::Timeout)?;
+    let len = noise
+        .write_message(&[], &mut tx)
+        .map_err(|_| MeshError::Timeout)?;
     write_noise_msg(&mut stream, &tx[..len]).await?;
 
     // <- e, ee, s, es
     let len = read_noise_msg(&mut stream, &mut rx).await?;
     let mut plain = vec![0u8; 65535];
-    noise.read_message(&rx[..len], &mut plain).map_err(|_| MeshError::Timeout)?;
+    noise
+        .read_message(&rx[..len], &mut plain)
+        .map_err(|_| MeshError::Timeout)?;
 
     // -> s, se
-    let len = noise.write_message(&[], &mut tx).map_err(|_| MeshError::Timeout)?;
+    let len = noise
+        .write_message(&[], &mut tx)
+        .map_err(|_| MeshError::Timeout)?;
     write_noise_msg(&mut stream, &tx[..len]).await?;
 
-    let mut transport = noise.into_transport_mode().map_err(|_| MeshError::Timeout)?;
+    let mut transport = noise
+        .into_transport_mode()
+        .map_err(|_| MeshError::Timeout)?;
 
     // Send encrypted burst.
-    let len = transport.write_message(payload, &mut tx).map_err(|_| MeshError::Timeout)?;
+    let len = transport
+        .write_message(payload, &mut tx)
+        .map_err(|_| MeshError::Timeout)?;
     write_noise_msg(&mut stream, &tx[..len]).await?;
 
     // Receive encrypted ACK.
     let len = read_noise_msg(&mut stream, &mut rx).await?;
-    let plen = transport.read_message(&rx[..len], &mut plain).map_err(|_| MeshError::Timeout)?;
+    let plen = transport
+        .read_message(&rx[..len], &mut plain)
+        .map_err(|_| MeshError::Timeout)?;
     if plen != 1 || plain[0] != RELAY_ACK_BYTE {
         return Err(MeshError::RelayRefused);
     }
@@ -165,26 +204,38 @@ async fn handle_noise_connection(
 
     // <- e (receive initiator's first message)
     let len = read_noise_msg(&mut stream, &mut rx).await?;
-    noise.read_message(&rx[..len], &mut plain).map_err(|_| MeshError::Timeout)?;
+    noise
+        .read_message(&rx[..len], &mut plain)
+        .map_err(|_| MeshError::Timeout)?;
 
     // -> e, ee, s, es
-    let len = noise.write_message(&[], &mut tx).map_err(|_| MeshError::Timeout)?;
+    let len = noise
+        .write_message(&[], &mut tx)
+        .map_err(|_| MeshError::Timeout)?;
     write_noise_msg(&mut stream, &tx[..len]).await?;
 
     // <- s, se
     let len = read_noise_msg(&mut stream, &mut rx).await?;
-    noise.read_message(&rx[..len], &mut plain).map_err(|_| MeshError::Timeout)?;
+    noise
+        .read_message(&rx[..len], &mut plain)
+        .map_err(|_| MeshError::Timeout)?;
 
-    let mut transport = noise.into_transport_mode().map_err(|_| MeshError::Timeout)?;
+    let mut transport = noise
+        .into_transport_mode()
+        .map_err(|_| MeshError::Timeout)?;
 
     // Receive encrypted burst.
     let len = read_noise_msg(&mut stream, &mut rx).await?;
-    let plen = transport.read_message(&rx[..len], &mut plain).map_err(|_| MeshError::Timeout)?;
+    let plen = transport
+        .read_message(&rx[..len], &mut plain)
+        .map_err(|_| MeshError::Timeout)?;
     // Intentionally blind: payload is decrypted to verify integrity, then dropped.
     let _ = &plain[..plen];
 
     // Send encrypted ACK.
-    let len = transport.write_message(&[RELAY_ACK_BYTE], &mut tx).map_err(|_| MeshError::Timeout)?;
+    let len = transport
+        .write_message(&[RELAY_ACK_BYTE], &mut tx)
+        .map_err(|_| MeshError::Timeout)?;
     write_noise_msg(&mut stream, &tx[..len]).await?;
 
     Ok(())
@@ -231,10 +282,7 @@ impl RelayNode {
 ///
 /// Phase 4: local, TCP (Phase 3), or Noise-encrypted (Phase 4) depending on endpoint scheme.
 /// Phase 5+: multi-hop onion routing through the full relay path.
-pub async fn route_burst(
-    payload: Vec<u8>,
-    route: Vec<RelayNode>,
-) -> Result<(), MeshError> {
+pub async fn route_burst(payload: Vec<u8>, route: Vec<RelayNode>) -> Result<(), MeshError> {
     if route.is_empty() {
         return Err(MeshError::NoRoute);
     }
@@ -266,10 +314,14 @@ pub async fn spawn_relay_listener() -> Result<SocketAddr, MeshError> {
         while let Ok((mut stream, _peer)) = listener.accept().await {
             tokio::spawn(async move {
                 let mut len_bytes = [0u8; 4];
-                if stream.read_exact(&mut len_bytes).await.is_err() { return; }
+                if stream.read_exact(&mut len_bytes).await.is_err() {
+                    return;
+                }
                 let len = decode_tcp_length(&len_bytes);
                 let mut payload = vec![0u8; len];
-                if stream.read_exact(&mut payload).await.is_err() { return; }
+                if stream.read_exact(&mut payload).await.is_err() {
+                    return;
+                }
                 drop(payload); // intentionally blind
                 let _ = stream.write_all(&[RELAY_ACK_BYTE]).await;
             });
@@ -288,14 +340,13 @@ pub async fn spawn_relay_listener() -> Result<SocketAddr, MeshError> {
 pub async fn spawn_noise_relay_listener() -> Result<(SocketAddr, Vec<u8>), MeshError> {
     use tokio::net::TcpListener;
 
-    let params: snow::params::NoiseParams =
-        NOISE_PARAMS.parse().map_err(|_| MeshError::NoRoute)?;
+    let params: snow::params::NoiseParams = NOISE_PARAMS.parse().map_err(|_| MeshError::NoRoute)?;
 
     let relay_keypair = snow::Builder::new(params)
         .generate_keypair()
         .map_err(|_| MeshError::NoRoute)?;
 
-    let relay_pub  = relay_keypair.public.clone();
+    let relay_pub = relay_keypair.public.clone();
     let relay_priv = relay_keypair.private.clone();
 
     let listener = TcpListener::bind("127.0.0.1:0")

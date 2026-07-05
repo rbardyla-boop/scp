@@ -45,12 +45,18 @@ impl EpochPhase {
 /// when both slices are empty. Use with `ProviderPool::active_set_snapshot()`
 /// to measure how much the active window has diversified across epochs.
 pub fn epoch_similarity(a: &[[u8; 32]], b: &[[u8; 32]]) -> f64 {
-    if a.is_empty() && b.is_empty() { return 1.0; }
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
     let set_a: HashSet<[u8; 32]> = a.iter().copied().collect();
     let set_b: HashSet<[u8; 32]> = b.iter().copied().collect();
     let intersection = set_a.intersection(&set_b).count();
-    let union        = set_a.union(&set_b).count();
-    if union == 0 { 1.0 } else { intersection as f64 / union as f64 }
+    let union = set_a.union(&set_b).count();
+    if union == 0 {
+        1.0
+    } else {
+        intersection as f64 / union as f64
+    }
 }
 
 /// Jensen-Shannon divergence between two provider selection distributions.
@@ -60,7 +66,9 @@ pub fn epoch_similarity(a: &[[u8; 32]], b: &[[u8; 32]]) -> f64 {
 /// Returns 0.0 for identical distributions. Returns 1.0 when supports are disjoint.
 /// Both empty: returns 0.0.
 pub fn exposure_divergence(a: &[([u8; 32], f64)], b: &[([u8; 32], f64)]) -> f64 {
-    if a.is_empty() && b.is_empty() { return 0.0; }
+    if a.is_empty() && b.is_empty() {
+        return 0.0;
+    }
     let map_a: HashMap<[u8; 32], f64> = a.iter().copied().collect();
     let map_b: HashMap<[u8; 32], f64> = b.iter().copied().collect();
     let all_ids: HashSet<[u8; 32]> = map_a.keys().chain(map_b.keys()).copied().collect();
@@ -69,8 +77,12 @@ pub fn exposure_divergence(a: &[([u8; 32], f64)], b: &[([u8; 32], f64)]) -> f64 
         let p = *map_a.get(id).unwrap_or(&0.0);
         let q = *map_b.get(id).unwrap_or(&0.0);
         let m = 0.5 * (p + q);
-        if p > 0.0 && m > 0.0 { jsd += 0.5 * p * (p / m).log2(); }
-        if q > 0.0 && m > 0.0 { jsd += 0.5 * q * (q / m).log2(); }
+        if p > 0.0 && m > 0.0 {
+            jsd += 0.5 * p * (p / m).log2();
+        }
+        if q > 0.0 && m > 0.0 {
+            jsd += 0.5 * q * (q / m).log2();
+        }
     }
     jsd.clamp(0.0, 1.0)
 }

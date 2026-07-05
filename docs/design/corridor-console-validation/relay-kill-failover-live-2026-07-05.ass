@@ -1,0 +1,23 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Title,DejaVu Sans Mono,40,&H00EAF2FF,&H00EAF2FF,&H00151B22,&HCC081018,1,0,0,0,100,100,0,0,1,2,1,7,64,64,54,1
+Style: Body,DejaVu Sans Mono,30,&H00EAF2FF,&H00EAF2FF,&H00151B22,&HCC081018,0,0,0,0,100,100,0,0,1,2,1,7,64,64,54,1
+Style: Pass,DejaVu Sans Mono,32,&H0099F5C8,&H0099F5C8,&H00151B22,&HCC081018,1,0,0,0,100,100,0,0,1,2,1,7,64,64,54,1
+Style: Warn,DejaVu Sans Mono,30,&H0089D8FF,&H0089D8FF,&H00151B22,&HCC081018,0,0,0,0,100,100,0,0,1,2,1,7,64,64,54,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:07.00,Title,,0,0,0,,SCP Corridor Console validation capture\N\NRelay-kill failover on the live mesh\N\NScope: dev-harness over Tailscale/WireGuard\NNot a production transport, NAT, metadata, or key-storage proof
+Dialogue: 0,0:00:07.00,0:00:14.00,Body,,0,0,0,,Topology\N\Nlaptop CLI\N  --relay 100.72.12.57:7700      wowserver\N  --relay 100.101.76.81:7700    ryan-desktop\N\NBoth relays were reachable before the failure.
+Dialogue: 0,0:00:14.00,0:00:21.00,Body,,0,0,0,,Fresh current-worktree binaries\N\Ncommit:     69a56e9\Nscp-cli:    2314bbf27ad535d34647a9921d8a6bc543aca84ddda4192df43245c382c67398\Nscp-relay:  929fa196b824254ed043b5cc21fb665eb72677cbd1232eb89fa2b1e38e52a00e
+Dialogue: 0,0:00:21.00,0:00:28.00,Warn,,0,0,0,,Real failure injection\N\N$ ssh ryan-desktop 'pkill -x scp-relay'\Nryan_relay_killed\Nryan-desktop reachable after kill: no\N\NOne blind relay is now actually down.
+Dialogue: 0,0:00:28.00,0:00:38.00,Body,,0,0,0,,Send with BOTH relays still configured\N\N$ scp-cli send --relay wowserver --relay ryan-desktop ...\Nevent=burst_stored\Nroute_id=41b413e046c47192efcb1e52874b7cbb\Nevent=burst_replicated count=1\Nsend_exit: 0\N\NPartial success is success: the live relay stored the burst.
+Dialogue: 0,0:00:38.00,0:00:49.00,Body,,0,0,0,,Receive with BOTH relays still configured\N\N$ scp-cli receive --relay wowserver --relay ryan-desktop ...\Nevent=payload_decrypted\Nplaintext=relay-kill-failover-live-2026-07-05\Nroute_id=41b413e046c47192efcb1e52874b7cbb\Nevent=exchange_complete count=1\Nreceive_exit: 0
+Dialogue: 0,0:00:49.00,0:00:55.00,Warn,,0,0,0,,Restore the killed relay\N\Nrestart_issued\Nryan-desktop reachable after restore: yes\N\NThe mesh was left standing.
+Dialogue: 0,0:00:55.00,0:01:00.00,Pass,,0,0,0,,Verdict\N\NPASS: send partial-success failover\NPASS: survivor relay delivery\NPASS: no vitality vocabulary in output\N\NNext validation: show this to 5 named technical people and watch which moment lands.

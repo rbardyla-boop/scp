@@ -93,8 +93,14 @@ impl AdmissionState {
 
     /// Verifies a challenge response without removing the pending entry.
     /// On failure, the pending entry remains (consumable until TTL expires).
-    pub(crate) fn verify(&self, provider_id: &[u8; 32], sig: &[u8; 64]) -> Result<(), AdmissionError> {
-        let pending = self.pending.get(provider_id)
+    pub(crate) fn verify(
+        &self,
+        provider_id: &[u8; 32],
+        sig: &[u8; 64],
+    ) -> Result<(), AdmissionError> {
+        let pending = self
+            .pending
+            .get(provider_id)
             .ok_or(AdmissionError::ChallengeNotFound)?;
         if pending.issued_at.elapsed() > self.config.challenge_ttl {
             return Err(AdmissionError::ChallengeExpired);

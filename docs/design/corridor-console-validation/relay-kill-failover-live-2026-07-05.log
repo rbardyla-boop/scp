@@ -1,0 +1,48 @@
+SCP Corridor Console validation capture
+Date: 2026-07-05
+Scope: dev-harness over Tailscale/WireGuard; not production transport/security proof
+Topology: laptop sender/receiver -> wowserver relay + ryan-desktop relay
+Commit: 69a56e9
+scp-cli: 2314bbf27ad535d34647a9921d8a6bc543aca84ddda4192df43245c382c67398
+scp-relay: 929fa196b824254ed043b5cc21fb665eb72677cbd1232eb89fa2b1e38e52a00e
+
+[1/7] confirm both relays reachable before failure
+wowserver reachable: yes
+ryan-desktop reachable: yes
+
+[2/7] generate dev-harness identities and mailbox
+$ ./target/release/scp-cli keygen --out /tmp/scp-relay-kill-gif.SmFSXz/alice.key
+{"event":"identity_created","handshake_expires_at":1783340628,"handshake_pub":"e22d3a5eb47dbb04b0d236173af5d00106c99460e503ff6a152f952fc20fb26d","handshake_sig":"f7fdb1e3436228065ae449f6c657fa3cac31143aea32b41a2cd26074dd400c0f912d33163b756f55ee83bb5b063e661825694ff6ab69d85cb4187195a02f340a","ops_pub":"07664c1dba1f037ff09dfd71bbd65a7fe37c1170478edcd509391a6fec5a6a5b"}
+$ ./target/release/scp-cli keygen --out /tmp/scp-relay-kill-gif.SmFSXz/bob.key
+{"event":"identity_created","handshake_expires_at":1783340628,"handshake_pub":"037e3f199f35691aac3b140aa9a24862a66785b2dc6746183b1dd26fffbd6b6f","handshake_sig":"bff3d0788b9a2a1fbf90ebe690eeac8b4694b1986c8f95e785a6ed16fa64c90105447bdf67ba9bd4ceb131db689f3504d7aa728740f30e89d3f2a9e35abd8d06","ops_pub":"45e23d2bb4e00e7cd8009e185147f477e4c58de3d3805ddb9420df9f6146d1b4"}
+$ ./target/release/scp-cli mailbox-new
+{"event":"mailbox_created","mailbox_id":"0e4770b2f010914735ed80054ed7146773a1fbb2c2d7016e5943774533247c58"}
+mailbox_id: 0e4770b2f010...774533247c58
+
+[3/7] kill the ryan-desktop relay for real
+$ ssh ryan-desktop 'pkill -x scp-relay'
+ryan_relay_killed
+ryan-desktop reachable after kill: no
+
+[4/7] send with BOTH relays configured; one is dead
+$ ./target/release/scp-cli send --identity alice.key --recipient bob.card --relay 100.72.12.57:7700 --relay 100.101.76.81:7700 --mailbox <redacted> --message 'relay-kill-failover-live-2026-07-05'
+{"event":"burst_stored","mailbox_id":"0e4770b2f010914735ed80054ed7146773a1fbb2c2d7016e5943774533247c58","route_id":"41b413e046c47192efcb1e52874b7cbb"}
+{"count":1,"event":"burst_replicated"}
+send_exit: 0
+
+[5/7] receive with BOTH relays configured; survivor must deliver
+$ ./target/release/scp-cli receive --identity bob.key --relay 100.72.12.57:7700 --relay 100.101.76.81:7700 --mailbox <redacted>
+{"event":"payload_decrypted","plaintext":"relay-kill-failover-live-2026-07-05","route_id":"41b413e046c47192efcb1e52874b7cbb"}
+{"count":1,"event":"exchange_complete"}
+receive_exit: 0
+
+[6/7] restore ryan-desktop relay
+restart_issued
+ryan-desktop reachable after restore: yes
+
+[7/7] verdict checks
+send partial-success failover: PASS
+survivor relay delivery: PASS
+no vitality vocabulary: PASS
+artifact_log: docs/design/corridor-console-validation/relay-kill-failover-live-2026-07-05.log
+restart_issued

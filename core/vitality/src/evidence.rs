@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use crate::function::{VitalityParams, compute};
+use crate::function::{compute, VitalityParams};
 use crate::state::VitalityState;
+use std::collections::HashMap;
 
 /// Relationship-scoped store for vitality reaffirmation timestamps.
 ///
@@ -19,7 +19,9 @@ impl Default for VitalityEvidenceStore {
 
 impl VitalityEvidenceStore {
     pub fn new() -> Self {
-        Self { evidence: HashMap::new() }
+        Self {
+            evidence: HashMap::new(),
+        }
     }
 
     /// Establish vitality evidence for a new bilateral consent relationship.
@@ -40,7 +42,10 @@ impl VitalityEvidenceStore {
     /// initialized evidence — no record is created and no state changes.
     pub fn record_reaffirmation(&mut self, consent_hash: [u8; 32], now: u64) -> bool {
         match self.evidence.get_mut(&consent_hash) {
-            Some(ts) => { *ts = now; true }
+            Some(ts) => {
+                *ts = now;
+                true
+            }
             None => false,
         }
     }

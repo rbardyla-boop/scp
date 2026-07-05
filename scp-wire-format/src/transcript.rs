@@ -1,6 +1,6 @@
 use crate::constants::{
-    TRANSCRIPT_MAGIC, TRANSCRIPT_V1_FORMAT, TRANSCRIPT_V2_FORMAT,
-    TRANSCRIPT_V1_LEN, TRANSCRIPT_V2_LEN,
+    TRANSCRIPT_MAGIC, TRANSCRIPT_V1_FORMAT, TRANSCRIPT_V1_LEN, TRANSCRIPT_V2_FORMAT,
+    TRANSCRIPT_V2_LEN,
 };
 
 /// Serialize a v1 transcript to its canonical 63-byte form.
@@ -22,12 +22,12 @@ pub fn transcript_v1_bytes(
 ) -> [u8; TRANSCRIPT_V1_LEN] {
     let mut data = [0u8; TRANSCRIPT_V1_LEN];
     data[0..4].copy_from_slice(TRANSCRIPT_MAGIC);
-    data[4]      = TRANSCRIPT_V1_FORMAT;
+    data[4] = TRANSCRIPT_V1_FORMAT;
     data[5..21].copy_from_slice(route_id);
     data[21..29].copy_from_slice(&nonce.to_le_bytes());
     data[29..61].copy_from_slice(recipient_ops_pub);
-    data[61]     = vitality_byte;
-    data[62]     = protocol_version;
+    data[61] = vitality_byte;
+    data[62] = protocol_version;
     data
 }
 
@@ -46,12 +46,12 @@ pub fn transcript_v2_bytes(
 ) -> [u8; TRANSCRIPT_V2_LEN] {
     let mut data = [0u8; TRANSCRIPT_V2_LEN];
     data[0..4].copy_from_slice(TRANSCRIPT_MAGIC);
-    data[4]      = TRANSCRIPT_V2_FORMAT;
+    data[4] = TRANSCRIPT_V2_FORMAT;
     data[5..21].copy_from_slice(route_id);
     data[21..29].copy_from_slice(&nonce.to_le_bytes());
     data[29..61].copy_from_slice(recipient_ops_pub);
-    data[61]     = vitality_byte;
-    data[62]     = protocol_version;
+    data[61] = vitality_byte;
+    data[62] = protocol_version;
     data[63..95].copy_from_slice(sender_ephemeral_pub);
     data
 }

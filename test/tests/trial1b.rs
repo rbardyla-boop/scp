@@ -47,10 +47,14 @@ fn make_v2_recipient(vitality: VitalityState) -> RecipientState {
         + 3600;
     let sig: [u8; 64] = ops_kp.sign(&handshake_sig_message(&eph_pub, expires_at));
     RecipientState {
-        ops_pub:             ops_kp.public,
+        ops_pub: ops_kp.public,
         vitality,
-        routing_hints:       vec![],
-        handshake_ephemeral: Some(PublishedHandshakeKey { pub_key: eph_pub, sig, expires_at }),
+        routing_hints: vec![],
+        handshake_ephemeral: Some(PublishedHandshakeKey {
+            pub_key: eph_pub,
+            sig,
+            expires_at,
+        }),
     }
 }
 
@@ -59,9 +63,9 @@ fn make_v2_recipient(vitality: VitalityState) -> RecipientState {
 /// ephemeral is examined, so the absence of an ephemeral does not affect rejection.
 fn make_bare_recipient(vitality: VitalityState) -> RecipientState {
     RecipientState {
-        ops_pub:             KeyPair::generate().public,
+        ops_pub: KeyPair::generate().public,
         vitality,
-        routing_hints:       vec![],
+        routing_hints: vec![],
         handshake_ephemeral: None,
     }
 }
@@ -83,7 +87,7 @@ async fn evidence_initialized_at_establishment_is_active_and_permits_send() {
         "at establishment time elapsed = 0s, V = 1.0, state must be Active"
     );
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
     let result = FlashSession::open_and_send(
         make_v2_recipient(state),
@@ -92,7 +96,10 @@ async fn evidence_initialized_at_establishment_is_active_and_permits_send() {
         &engine,
     )
     .await;
-    assert!(result.is_ok(), "Active computed state must permit open_and_send");
+    assert!(
+        result.is_ok(),
+        "Active computed state must permit open_and_send"
+    );
 }
 
 // ── Test 2: Missing evidence fails closed to Suspended ─────────────────────────
@@ -100,7 +107,7 @@ async fn evidence_initialized_at_establishment_is_active_and_permits_send() {
 #[test]
 fn evidence_missing_fails_closed_to_suspended() {
     let store = VitalityEvidenceStore::new();
-    let hash  = consent_hash(b"trial1b-t2-unknown");
+    let hash = consent_hash(b"trial1b-t2-unknown");
 
     let state = store.compute_state(hash, 9_999_999, 1.0, 1.0, 0.0);
     assert_eq!(
@@ -117,14 +124,17 @@ fn evidence_missing_fails_closed_to_suspended() {
 fn evidence_initialize_at_is_write_once() {
     let mut store = VitalityEvidenceStore::new();
     let hash = consent_hash(b"trial1b-t3-write-once");
-    let t0   = 1_000_000_u64;
-    let t1   = 9_000_000_u64;
+    let t0 = 1_000_000_u64;
+    let t1 = 9_000_000_u64;
 
-    let first  = store.initialize_at(hash, t0);
+    let first = store.initialize_at(hash, t0);
     assert!(first, "first initialization must return true");
 
     let second = store.initialize_at(hash, t1);
-    assert!(!second, "second initialization must return false — write-once");
+    assert!(
+        !second,
+        "second initialization must return false — write-once"
+    );
 
     // Evidence must still be anchored at t0, not t1.
     let state_at_t0 = store.compute_state(hash, t0, 1.0, 1.0, 0.0);
@@ -151,10 +161,13 @@ fn evidence_initialize_at_is_write_once() {
 fn evidence_reaffirmation_rejects_uninitialized_hash() {
     let mut store = VitalityEvidenceStore::new();
     let hash = consent_hash(b"trial1b-t4-uninitialized");
-    let now  = 5_000_000_u64;
+    let now = 5_000_000_u64;
 
     let result = store.record_reaffirmation(hash, now);
-    assert!(!result, "record_reaffirmation must return false for uninitialized hash");
+    assert!(
+        !result,
+        "record_reaffirmation must return false for uninitialized hash"
+    );
 
     let state = store.compute_state(hash, now, 1.0, 1.0, 0.0);
     assert_eq!(
@@ -233,9 +246,13 @@ async fn evidence_suspended_composes_with_send_gate_as_vitality_insufficient() {
     store.initialize_at(hash, 0);
 
     let state = store.compute_state(hash, 4_171_664, 1.0, 1.0, 0.0);
-    assert_eq!(state, VitalityState::Suspended, "precondition: must be Suspended");
+    assert_eq!(
+        state,
+        VitalityState::Suspended,
+        "precondition: must be Suspended"
+    );
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
     let result = FlashSession::open_and_send(
         make_bare_recipient(state),
@@ -246,7 +263,12 @@ async fn evidence_suspended_composes_with_send_gate_as_vitality_insufficient() {
     .await;
 
     assert!(
-        matches!(result, Err(TransportError::VitalityInsufficient(VitalityState::Suspended))),
+        matches!(
+            result,
+            Err(TransportError::VitalityInsufficient(
+                VitalityState::Suspended
+            ))
+        ),
         "computed Suspended must compose with send gate as VitalityInsufficient(Suspended)"
     );
 }
@@ -261,10 +283,17 @@ async fn evidence_reaffirmation_after_suspension_restores_active_and_permits_sen
 
     let t_suspended = 4_171_664_u64;
     let suspended = store.compute_state(hash, t_suspended, 1.0, 1.0, 0.0);
-    assert_eq!(suspended, VitalityState::Suspended, "precondition: must be Suspended");
+    assert_eq!(
+        suspended,
+        VitalityState::Suspended,
+        "precondition: must be Suspended"
+    );
 
     let ok = store.record_reaffirmation(hash, t_suspended);
-    assert!(ok, "record_reaffirmation must succeed on an initialized hash");
+    assert!(
+        ok,
+        "record_reaffirmation must succeed on an initialized hash"
+    );
 
     let restored = store.compute_state(hash, t_suspended, 1.0, 1.0, 0.0);
     assert_eq!(
@@ -273,7 +302,7 @@ async fn evidence_reaffirmation_after_suspension_restores_active_and_permits_sen
         "elapsed = 0 after reaffirmation at t_suspended must yield Active"
     );
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
     let result = FlashSession::open_and_send(
         make_v2_recipient(restored),
@@ -282,7 +311,10 @@ async fn evidence_reaffirmation_after_suspension_restores_active_and_permits_sen
         &engine,
     )
     .await;
-    assert!(result.is_ok(), "Active state after reaffirmation must permit send");
+    assert!(
+        result.is_ok(),
+        "Active state after reaffirmation must permit send"
+    );
 }
 
 // ── Test 10: Successful send does not implicitly update evidence timestamp ─────
@@ -295,9 +327,13 @@ async fn evidence_successful_send_does_not_implicitly_refresh_vitality() {
     store.initialize_at(hash, t0);
 
     let active = store.compute_state(hash, t0, 1.0, 1.0, 0.0);
-    assert_eq!(active, VitalityState::Active, "precondition: must be Active at t0");
+    assert_eq!(
+        active,
+        VitalityState::Active,
+        "precondition: must be Active at t0"
+    );
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
     FlashSession::open_and_send(
         make_v2_recipient(active),
@@ -348,7 +384,7 @@ async fn evidence_relationship_isolation() {
         "AC: reaffirmed at t_eval, elapsed = 0 — must be Active"
     );
 
-    let cache  = WarmCache::new(Duration::from_secs(600));
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let result_ab = FlashSession::open_and_send(
@@ -359,7 +395,12 @@ async fn evidence_relationship_isolation() {
     )
     .await;
     assert!(
-        matches!(result_ab, Err(TransportError::VitalityInsufficient(VitalityState::Suspended))),
+        matches!(
+            result_ab,
+            Err(TransportError::VitalityInsufficient(
+                VitalityState::Suspended
+            ))
+        ),
         "AB send must be rejected: VitalityInsufficient(Suspended)"
     );
 
@@ -370,5 +411,8 @@ async fn evidence_relationship_isolation() {
         &engine,
     )
     .await;
-    assert!(result_ac.is_ok(), "AC send must be permitted: Active vitality");
+    assert!(
+        result_ac.is_ok(),
+        "AC send must be permitted: Active vitality"
+    );
 }

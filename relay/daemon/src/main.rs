@@ -18,7 +18,7 @@ use tokio::net::{TcpListener, TcpStream};
 type MailboxStore = Arc<Mutex<HashMap<[u8; 32], Vec<Vec<u8>>>>>;
 
 const MAX_BURST_BYTES: usize = 1_048_576; // 1 MiB per burst
-const MAX_QUEUE_DEPTH: usize = 100;       // oldest evicted on overflow
+const MAX_QUEUE_DEPTH: usize = 100; // oldest evicted on overflow
 
 #[tokio::main]
 async fn main() {
@@ -69,14 +69,22 @@ async fn handle_store(stream: &mut TcpStream, store: MailboxStore) {
     let mut token = [0u8; 32];
     let mut len_buf = [0u8; 4];
 
-    if stream.read_exact(&mut token).await.is_err() { return; }
-    if stream.read_exact(&mut len_buf).await.is_err() { return; }
+    if stream.read_exact(&mut token).await.is_err() {
+        return;
+    }
+    if stream.read_exact(&mut len_buf).await.is_err() {
+        return;
+    }
 
     let payload_len = u32::from_le_bytes(len_buf) as usize;
-    if payload_len > MAX_BURST_BYTES { return; }
+    if payload_len > MAX_BURST_BYTES {
+        return;
+    }
 
     let mut payload = vec![0u8; payload_len];
-    if stream.read_exact(&mut payload).await.is_err() { return; }
+    if stream.read_exact(&mut payload).await.is_err() {
+        return;
+    }
 
     {
         let mut mb = store.lock().unwrap();
@@ -87,14 +95,18 @@ async fn handle_store(stream: &mut TcpStream, store: MailboxStore) {
         queue.push(payload);
     }
 
-    println!("{{\"event\":\"burst_stored\",\"mailbox\":\"{}\"}}",
-             hex(&token));
+    println!(
+        "{{\"event\":\"burst_stored\",\"mailbox\":\"{}\"}}",
+        hex(&token)
+    );
     let _ = stream.write_all(&[0x00]).await;
 }
 
 async fn handle_poll(stream: &mut TcpStream, store: MailboxStore) {
     let mut token = [0u8; 32];
-    if stream.read_exact(&mut token).await.is_err() { return; }
+    if stream.read_exact(&mut token).await.is_err() {
+        return;
+    }
 
     let bursts: Vec<Vec<u8>> = {
         let mut mb = store.lock().unwrap();
@@ -102,17 +114,26 @@ async fn handle_poll(stream: &mut TcpStream, store: MailboxStore) {
     };
 
     if !bursts.is_empty() {
-        println!("{{\"event\":\"mailbox_drained\",\"mailbox\":\"{}\",\"count\":{}}}",
-                 hex(&token), bursts.len());
+        println!(
+            "{{\"event\":\"mailbox_drained\",\"mailbox\":\"{}\",\"count\":{}}}",
+            hex(&token),
+            bursts.len()
+        );
     }
 
     let count = bursts.len() as u32;
-    if stream.write_all(&count.to_le_bytes()).await.is_err() { return; }
+    if stream.write_all(&count.to_le_bytes()).await.is_err() {
+        return;
+    }
 
     for burst in &bursts {
         let len = burst.len() as u32;
-        if stream.write_all(&len.to_le_bytes()).await.is_err() { return; }
-        if stream.write_all(burst).await.is_err() { return; }
+        if stream.write_all(&len.to_le_bytes()).await.is_err() {
+            return;
+        }
+        if stream.write_all(burst).await.is_err() {
+            return;
+        }
     }
 }
 

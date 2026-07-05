@@ -26,12 +26,16 @@
 
 use scp_cryptography::keys::KeyPair;
 use scp_cryptography::x25519_generate_keypair;
-use scp_ledger_substrate::{HandshakeEphemeral, SubstrateLedger, TunnelConsent, tunnel_consent_hash};
+use scp_ledger_substrate::{
+    tunnel_consent_hash, HandshakeEphemeral, SubstrateLedger, TunnelConsent,
+};
 use scp_relay_cache::WarmCache;
 use scp_relay_perturbation::PerturbationEngine;
 use scp_transport::corridor;
 use scp_transport::flash::{FlashSession, TransportError};
-use scp_vitality::{SimVitalityContextError, SimVitalityEvaluationContext, VitalityEvidenceStore, VitalityState};
+use scp_vitality::{
+    SimVitalityContextError, SimVitalityEvaluationContext, VitalityEvidenceStore, VitalityState,
+};
 use scp_wire_format::signing::handshake_sig_message;
 use std::time::Duration;
 
@@ -40,7 +44,11 @@ use std::time::Duration;
 /// Register bilateral tunnel consent between two keypairs and return the
 /// canonical consent hash. Both parties sign over the hash as required by
 /// the ledger's signature verification.
-fn register_bilateral_consent(ledger: &SubstrateLedger, kp_a: &KeyPair, kp_b: &KeyPair) -> [u8; 32] {
+fn register_bilateral_consent(
+    ledger: &SubstrateLedger,
+    kp_a: &KeyPair,
+    kp_b: &KeyPair,
+) -> [u8; 32] {
     let ch = tunnel_consent_hash(&kp_a.public, &kp_b.public);
     let consent = TunnelConsent {
         party_a: kp_a.public,
@@ -48,7 +56,9 @@ fn register_bilateral_consent(ledger: &SubstrateLedger, kp_a: &KeyPair, kp_b: &K
         sig_a: kp_a.sign(&ch).to_vec(),
         sig_b: kp_b.sign(&ch).to_vec(),
     };
-    ledger.register_tunnel(consent).expect("bilateral tunnel registration must succeed");
+    ledger
+        .register_tunnel(consent)
+        .expect("bilateral tunnel registration must succeed");
     ch
 }
 
@@ -62,8 +72,8 @@ fn publish_ephemeral_at(ledger: &SubstrateLedger, ops_kp: &KeyPair, sim_now: u64
     let expires_at = sim_now + 3_600;
     let sig: [u8; 64] = ops_kp.sign(&handshake_sig_message(&eph_pub, expires_at));
     let eph = HandshakeEphemeral {
-        pub_key:      eph_pub,
-        sig:          sig.to_vec(),
+        pub_key: eph_pub,
+        sig: sig.to_vec(),
         published_at: sim_now,
         expires_at,
     };
@@ -81,16 +91,20 @@ fn std_ctx(consent_hash: [u8; 32], now: u64) -> SimVitalityEvaluationContext {
         .expect("standard controls must be valid")
 }
 
-fn warm_cache() -> WarmCache { WarmCache::new(Duration::from_secs(600)) }
-fn passthrough() -> PerturbationEngine { PerturbationEngine::passthrough() }
+fn warm_cache() -> WarmCache {
+    WarmCache::new(Duration::from_secs(600))
+}
+fn passthrough() -> PerturbationEngine {
+    PerturbationEngine::passthrough()
+}
 
 // ── T1: Fresh initialized bilateral relationship computes Active and send succeeds ──
 
 #[tokio::test]
 async fn runtime_active_relationship_permits_send() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -101,7 +115,13 @@ async fn runtime_active_relationship_permits_send() {
 
     let ctx = std_ctx(ch, t0);
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t1-payload", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t1-payload",
+        &warm_cache(),
+        &passthrough(),
     )
     .await;
 
@@ -113,8 +133,8 @@ async fn runtime_active_relationship_permits_send() {
 #[tokio::test]
 async fn runtime_suspended_relationship_blocks_send() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -126,12 +146,23 @@ async fn runtime_suspended_relationship_blocks_send() {
 
     let ctx = std_ctx(ch, t_suspended);
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t2-payload", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t2-payload",
+        &warm_cache(),
+        &passthrough(),
     )
     .await;
 
     assert!(
-        matches!(result, Err(TransportError::VitalityInsufficient(VitalityState::Suspended))),
+        matches!(
+            result,
+            Err(TransportError::VitalityInsufficient(
+                VitalityState::Suspended
+            ))
+        ),
         "past Suspended threshold must produce VitalityInsufficient(Suspended)"
     );
 }
@@ -141,8 +172,8 @@ async fn runtime_suspended_relationship_blocks_send() {
 #[tokio::test]
 async fn runtime_reaffirmation_restores_send() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -162,11 +193,20 @@ async fn runtime_reaffirmation_restores_send() {
 
     let ctx = std_ctx(ch, t_suspended);
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t3-payload", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t3-payload",
+        &warm_cache(),
+        &passthrough(),
     )
     .await;
 
-    assert!(result.is_ok(), "Active state after reaffirmation must permit send");
+    assert!(
+        result.is_ok(),
+        "Active state after reaffirmation must permit send"
+    );
 }
 
 // ── T4: Missing vitality evidence fails closed during simulator runtime send ──
@@ -174,8 +214,8 @@ async fn runtime_reaffirmation_restores_send() {
 #[tokio::test]
 async fn runtime_missing_evidence_fails_closed() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     // Register consent so hash is real, but never initialize evidence.
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
     publish_ephemeral_at(&ledger, &bob, 0);
@@ -183,12 +223,23 @@ async fn runtime_missing_evidence_fails_closed() {
     let store = VitalityEvidenceStore::new(); // no evidence initialized
     let ctx = std_ctx(ch, 0);
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t4-payload", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t4-payload",
+        &warm_cache(),
+        &passthrough(),
     )
     .await;
 
     assert!(
-        matches!(result, Err(TransportError::VitalityInsufficient(VitalityState::Suspended))),
+        matches!(
+            result,
+            Err(TransportError::VitalityInsufficient(
+                VitalityState::Suspended
+            ))
+        ),
         "missing evidence must fail closed: VitalityInsufficient(Suspended)"
     );
 }
@@ -199,7 +250,7 @@ async fn runtime_missing_evidence_fails_closed() {
 async fn runtime_relationship_isolation_ab_vs_ac() {
     let ledger = SubstrateLedger::new();
     let alice = KeyPair::generate();
-    let bob   = KeyPair::generate();
+    let bob = KeyPair::generate();
     let carol = KeyPair::generate();
 
     let ch_ab = register_bilateral_consent(&ledger, &alice, &bob);
@@ -217,24 +268,46 @@ async fn runtime_relationship_isolation_ab_vs_ac() {
     store.record_reaffirmation(ch_ac, t_eval);
 
     // Publish fresh ephemerals at t_eval for both recipients.
-    publish_ephemeral_at(&ledger, &bob,   t_eval);
+    publish_ephemeral_at(&ledger, &bob, t_eval);
     publish_ephemeral_at(&ledger, &carol, t_eval);
 
     let ctx_ab = std_ctx(ch_ab, t_eval);
     let ctx_ac = std_ctx(ch_ac, t_eval);
 
     let result_ab = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx_ab, &bob.public,   b"t5-ab", &warm_cache(), &passthrough(),
-    ).await;
+        &ledger,
+        &store,
+        &ctx_ab,
+        &bob.public,
+        b"t5-ab",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
     let result_ac = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx_ac, &carol.public, b"t5-ac", &warm_cache(), &passthrough(),
-    ).await;
+        &ledger,
+        &store,
+        &ctx_ac,
+        &carol.public,
+        b"t5-ac",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
 
     assert!(
-        matches!(result_ab, Err(TransportError::VitalityInsufficient(VitalityState::Suspended))),
+        matches!(
+            result_ab,
+            Err(TransportError::VitalityInsufficient(
+                VitalityState::Suspended
+            ))
+        ),
         "AB: must be blocked — Suspended"
     );
-    assert!(result_ac.is_ok(), "AC: must be permitted — Active after reaffirmation");
+    assert!(
+        result_ac.is_ok(),
+        "AC: must be permitted — Active after reaffirmation"
+    );
 }
 
 // ── T6: Successful simulator send does not implicitly reaffirm evidence ──
@@ -242,8 +315,8 @@ async fn runtime_relationship_isolation_ab_vs_ac() {
 #[tokio::test]
 async fn runtime_send_does_not_refresh_evidence() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -254,7 +327,13 @@ async fn runtime_send_does_not_refresh_evidence() {
     // Permitted send at t0.
     let ctx_t0 = std_ctx(ch, t0);
     FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx_t0, &bob.public, b"t6-send", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx_t0,
+        &bob.public,
+        b"t6-send",
+        &warm_cache(),
+        &passthrough(),
     )
     .await
     .expect("Active at t0 must permit send");
@@ -276,14 +355,14 @@ async fn runtime_send_does_not_refresh_evidence() {
 #[tokio::test]
 async fn retrieve_state_sim_bypasses_hardcoded_active() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     // Register consent but intentionally do not initialize evidence.
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
     publish_ephemeral_at(&ledger, &bob, 0);
 
     let store = VitalityEvidenceStore::new(); // no evidence
-    let ctx   = std_ctx(ch, 0);
+    let ctx = std_ctx(ch, 0);
 
     // Production path returns hardcoded Active regardless of evidence.
     let prod_state = FlashSession::retrieve_state(&ledger, &bob.public)
@@ -311,8 +390,8 @@ async fn retrieve_state_sim_bypasses_hardcoded_active() {
 #[tokio::test]
 async fn corridor_receive_unaffected_after_suspension() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -324,7 +403,13 @@ async fn corridor_receive_unaffected_after_suspension() {
 
     let ctx = std_ctx(ch, t0);
     let (_, envelope) = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t8-secret-message", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t8-secret-message",
+        &warm_cache(),
+        &passthrough(),
     )
     .await
     .expect("Active at t0 must permit send");
@@ -349,8 +434,8 @@ async fn corridor_receive_unaffected_after_suspension() {
 #[tokio::test]
 async fn scenario_controls_i_r_p_are_explicit() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -364,11 +449,22 @@ async fn scenario_controls_i_r_p_are_explicit() {
     let ctx_reduced = SimVitalityEvaluationContext::new(ch, t_half_life, 0.3, 0.5, 0.0)
         .expect("reduced controls are valid");
     let result_reduced = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx_reduced, &bob.public, b"t9-reduced", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx_reduced,
+        &bob.public,
+        b"t9-reduced",
+        &warm_cache(),
+        &passthrough(),
     )
     .await;
     assert!(
-        matches!(result_reduced, Err(TransportError::VitalityInsufficient(VitalityState::Suspended))),
+        matches!(
+            result_reduced,
+            Err(TransportError::VitalityInsufficient(
+                VitalityState::Suspended
+            ))
+        ),
         "i=0.3, r=0.5 at t_half_life must yield Suspended — formula boundary must shift"
     );
 
@@ -377,7 +473,13 @@ async fn scenario_controls_i_r_p_are_explicit() {
     // Publish a second ephemeral for the standard-control send.
     publish_ephemeral_at(&ledger, &bob, t_half_life);
     let result_standard = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx_standard, &bob.public, b"t9-standard", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx_standard,
+        &bob.public,
+        b"t9-standard",
+        &warm_cache(),
+        &passthrough(),
     )
     .await;
     assert!(
@@ -450,9 +552,9 @@ fn sim_context_rejects_invalid_controls() {
 
 #[tokio::test]
 async fn simulated_time_controls_ephemeral_expiry() {
-    let ledger  = SubstrateLedger::new();
-    let alice   = KeyPair::generate();
-    let bob     = KeyPair::generate();
+    let ledger = SubstrateLedger::new();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -474,8 +576,13 @@ async fn simulated_time_controls_ephemeral_expiry() {
     // get_handshake_ephemeral filters on expires_at > now, so at now = eph_expires_at - 1
     // it's still valid.
     let result_before = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx_before_expiry, &bob.public,
-        b"t11-before", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx_before_expiry,
+        &bob.public,
+        b"t11-before",
+        &warm_cache(),
+        &passthrough(),
     )
     .await;
     assert!(
@@ -488,8 +595,13 @@ async fn simulated_time_controls_ephemeral_expiry() {
     // returns V1PathNotReceivable (since sim path requires v2).
     let ctx_at_expiry = std_ctx(ch, eph_expires_at);
     let result_at = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx_at_expiry, &bob.public,
-        b"t11-at", &warm_cache(), &passthrough(),
+        &ledger,
+        &store,
+        &ctx_at_expiry,
+        &bob.public,
+        b"t11-at",
+        &warm_cache(),
+        &passthrough(),
     )
     .await;
     assert!(
@@ -521,14 +633,18 @@ async fn production_send_path_unaffected() {
 
     // Construct RecipientState directly — production path does not consult evidence.
     let state = RecipientState {
-        ops_pub:             ops_kp.public,
-        vitality:            VitalityState::Active,
-        routing_hints:       vec![],
-        handshake_ephemeral: Some(PublishedHandshakeKey { pub_key: eph_pub, sig, expires_at }),
+        ops_pub: ops_kp.public,
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
+        handshake_ephemeral: Some(PublishedHandshakeKey {
+            pub_key: eph_pub,
+            sig,
+            expires_at,
+        }),
     };
 
-    let result = FlashSession::open_and_send(state, b"t12-production", &warm_cache(), &passthrough())
-        .await;
+    let result =
+        FlashSession::open_and_send(state, b"t12-production", &warm_cache(), &passthrough()).await;
     assert!(
         result.is_ok(),
         "production open_and_send must still work after open_and_send_core refactoring"

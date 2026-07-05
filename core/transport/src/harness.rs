@@ -7,16 +7,17 @@
 /// DevMailboxId is a random 32-byte opaque token shared out-of-band between
 /// sender and receiver. The relay stores bursts keyed by this token and cannot
 /// link it to any identity key, session key, or payload content.
-
 use crate::session::{FreshnessNonce, RouteId};
 use crate::transcript::{FlashTranscriptV2, TransportKeyMaterial};
 use rand_core::{OsRng, RngCore};
+use scp_cryptography::keys::{
+    x25519_dh, x25519_generate_keypair, CryptoError, SessionKey as CryptoSessionKey,
+};
 use scp_cryptography::{scp_derive_key, DomainLabel};
-use scp_cryptography::keys::{x25519_dh, x25519_generate_keypair, CryptoError, SessionKey as CryptoSessionKey};
 use scp_vitality::VitalityState;
 use scp_wire_format::constants::{
-    VITALITY_ACTIVE, VITALITY_BURNED, VITALITY_DORMANT,
-    VITALITY_SEVERED, VITALITY_SUSPENDED, VITALITY_WARM,
+    VITALITY_ACTIVE, VITALITY_BURNED, VITALITY_DORMANT, VITALITY_SEVERED, VITALITY_SUSPENDED,
+    VITALITY_WARM,
 };
 use serde::{Deserialize, Serialize};
 
@@ -126,7 +127,10 @@ pub fn receive_harness(
         recipient_binding: *recipient_ops_pub,
     };
 
-    let session_key = CryptoSessionKey(scp_derive_key(DomainLabel::Transport, &key_material.as_bytes()));
+    let session_key = CryptoSessionKey(scp_derive_key(
+        DomainLabel::Transport,
+        &key_material.as_bytes(),
+    ));
 
     session_key
         .decrypt(&burst.ciphertext, &burst.enc_nonce)
@@ -142,12 +146,12 @@ pub fn receive_harness(
 /// constants. Does not produce vocabulary labels in error output.
 pub fn vitality_from_byte(byte: u8) -> Result<VitalityState, HarnessError> {
     match byte {
-        b if b == VITALITY_ACTIVE    => Ok(VitalityState::Active),
-        b if b == VITALITY_WARM      => Ok(VitalityState::Warm),
-        b if b == VITALITY_DORMANT   => Ok(VitalityState::Dormant),
+        b if b == VITALITY_ACTIVE => Ok(VitalityState::Active),
+        b if b == VITALITY_WARM => Ok(VitalityState::Warm),
+        b if b == VITALITY_DORMANT => Ok(VitalityState::Dormant),
         b if b == VITALITY_SUSPENDED => Ok(VitalityState::Suspended),
-        b if b == VITALITY_SEVERED   => Ok(VitalityState::Severed),
-        b if b == VITALITY_BURNED    => Ok(VitalityState::Burned),
+        b if b == VITALITY_SEVERED => Ok(VitalityState::Severed),
+        b if b == VITALITY_BURNED => Ok(VitalityState::Burned),
         other => Err(HarnessError::UnknownVitalityByte(other)),
     }
 }
@@ -155,12 +159,12 @@ pub fn vitality_from_byte(byte: u8) -> Result<VitalityState, HarnessError> {
 /// Maps a `VitalityState` to its wire byte. Used by the sender to populate `DevHarnessBurst`.
 pub fn vitality_to_byte(state: &VitalityState) -> u8 {
     match state {
-        VitalityState::Active    => VITALITY_ACTIVE,
-        VitalityState::Warm      => VITALITY_WARM,
-        VitalityState::Dormant   => VITALITY_DORMANT,
+        VitalityState::Active => VITALITY_ACTIVE,
+        VitalityState::Warm => VITALITY_WARM,
+        VitalityState::Dormant => VITALITY_DORMANT,
         VitalityState::Suspended => VITALITY_SUSPENDED,
-        VitalityState::Severed   => VITALITY_SEVERED,
-        VitalityState::Burned    => VITALITY_BURNED,
+        VitalityState::Severed => VITALITY_SEVERED,
+        VitalityState::Burned => VITALITY_BURNED,
     }
 }
 
@@ -176,7 +180,7 @@ pub fn vitality_to_byte(state: &VitalityState) -> u8 {
 /// `recipient_ops_pub` is bound into the v2 transcript hash and **must** match
 /// the value the recipient passes to `receive_harness()`.
 pub fn send_harness_direct(
-    recipient_ops_pub:    &[u8; 32],
+    recipient_ops_pub: &[u8; 32],
     recipient_handshake_pub: &[u8; 32],
     payload: &[u8],
 ) -> DevHarnessBurst {
@@ -184,32 +188,35 @@ pub fn send_harness_direct(
     let dh_output = x25519_dh(&sender_secret, recipient_handshake_pub);
 
     let route_id = RouteId::generate();
-    let nonce    = FreshnessNonce::generate();
+    let nonce = FreshnessNonce::generate();
     let vitality = VitalityState::Active;
 
     let transcript = FlashTranscriptV2 {
-        route_id:             route_id.clone(),
-        nonce:                nonce.clone(),
-        recipient_ops_pub:    *recipient_ops_pub,
-        vitality_snapshot:    vitality.clone(),
-        protocol_version:     2,
+        route_id: route_id.clone(),
+        nonce: nonce.clone(),
+        recipient_ops_pub: *recipient_ops_pub,
+        vitality_snapshot: vitality.clone(),
+        protocol_version: 2,
         sender_ephemeral_pub: sender_pub,
     };
 
     let key_material = TransportKeyMaterial {
-        ephemeral_seed:    dh_output,
-        transcript_hash:   transcript.hash(),
+        ephemeral_seed: dh_output,
+        transcript_hash: transcript.hash(),
         recipient_binding: *recipient_ops_pub,
     };
 
-    let session_key = CryptoSessionKey(scp_derive_key(DomainLabel::Transport, &key_material.as_bytes()));
+    let session_key = CryptoSessionKey(scp_derive_key(
+        DomainLabel::Transport,
+        &key_material.as_bytes(),
+    ));
     let (ciphertext, enc_nonce) = session_key.encrypt(payload);
 
     DevHarnessBurst {
         sender_ephemeral_pub: sender_pub,
-        route_id:             route_id.0,
-        freshness_nonce:      nonce.0,
-        vitality_byte:        vitality_to_byte(&vitality),
+        route_id: route_id.0,
+        freshness_nonce: nonce.0,
+        vitality_byte: vitality_to_byte(&vitality),
         enc_nonce,
         ciphertext,
     }
@@ -222,14 +229,12 @@ pub fn hex_encode(bytes: &[u8]) -> String {
 
 /// Lowercase hex decode.
 pub fn hex_decode(s: &str) -> Result<Vec<u8>, HarnessError> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return Err(HarnessError::InvalidHex);
     }
     (0..s.len())
         .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| HarnessError::InvalidHex)
-        })
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| HarnessError::InvalidHex))
         .collect()
 }
 
@@ -247,7 +252,9 @@ pub enum HarnessError {
     InvalidMailboxId,
     #[error("invalid hex string")]
     InvalidHex,
-    #[error("v1 send path is not supported in the dev harness: publish a handshake ephemeral first")]
+    #[error(
+        "v1 send path is not supported in the dev harness: publish a handshake ephemeral first"
+    )]
     V1PathNotSupported,
 }
 
@@ -256,8 +263,8 @@ mod tests {
     use super::*;
     use crate::transcript::TransportKeyMaterial;
     use scp_cryptography::keys::x25519_generate_keypair;
-    use scp_cryptography::{scp_derive_key, DomainLabel};
     use scp_cryptography::keys::SessionKey as CryptoSessionKey;
+    use scp_cryptography::{scp_derive_key, DomainLabel};
 
     fn make_burst(
         sender_secret: &[u8; 32],
@@ -288,7 +295,10 @@ mod tests {
             recipient_binding: *recipient_ops_pub,
         };
 
-        let session_key = CryptoSessionKey(scp_derive_key(DomainLabel::Transport, &key_material.as_bytes()));
+        let session_key = CryptoSessionKey(scp_derive_key(
+            DomainLabel::Transport,
+            &key_material.as_bytes(),
+        ));
         let (ciphertext, enc_nonce) = session_key.encrypt(plaintext);
 
         DevHarnessBurst {
@@ -308,7 +318,13 @@ mod tests {
         let ops_pub = [0x11u8; 32];
 
         let plaintext = b"hello scp";
-        let burst = make_burst(&sender_secret, &sender_pub, &recipient_pub, &ops_pub, plaintext);
+        let burst = make_burst(
+            &sender_secret,
+            &sender_pub,
+            &recipient_pub,
+            &ops_pub,
+            plaintext,
+        );
 
         let recovered = receive_harness(&recipient_secret, &ops_pub, &burst).unwrap();
         assert_eq!(recovered, plaintext);
@@ -321,7 +337,13 @@ mod tests {
         let (wrong_secret, _) = x25519_generate_keypair();
         let ops_pub = [0x11u8; 32];
 
-        let burst = make_burst(&sender_secret, &sender_pub, &recipient_pub, &ops_pub, b"data");
+        let burst = make_burst(
+            &sender_secret,
+            &sender_pub,
+            &recipient_pub,
+            &ops_pub,
+            b"data",
+        );
 
         assert!(matches!(
             receive_harness(&wrong_secret, &ops_pub, &burst),
@@ -336,7 +358,13 @@ mod tests {
         let ops_pub = [0x11u8; 32];
         let wrong_ops_pub = [0x22u8; 32];
 
-        let burst = make_burst(&sender_secret, &sender_pub, &recipient_pub, &ops_pub, b"data");
+        let burst = make_burst(
+            &sender_secret,
+            &sender_pub,
+            &recipient_pub,
+            &ops_pub,
+            b"data",
+        );
 
         assert!(matches!(
             receive_harness(&recipient_secret, &wrong_ops_pub, &burst),
@@ -350,7 +378,13 @@ mod tests {
         let (recipient_secret, recipient_pub) = x25519_generate_keypair();
         let ops_pub = [0x11u8; 32];
 
-        let burst = make_burst(&sender_secret, &sender_pub, &recipient_pub, &ops_pub, b"cbor test");
+        let burst = make_burst(
+            &sender_secret,
+            &sender_pub,
+            &recipient_pub,
+            &ops_pub,
+            b"cbor test",
+        );
         let bytes = serialize_burst(&burst).unwrap();
         let recovered_burst = deserialize_burst(&bytes).unwrap();
 

@@ -31,7 +31,11 @@ mod tests {
         assert_eq!(&data[21..29], &1u64.to_le_bytes());
         // nonce=256 places 0x00,0x01,... at byte 21 — must differ from nonce=1
         let data256 = transcript::transcript_v1_bytes(&[0u8; 16], 256u64, &[0u8; 32], 0, 1);
-        assert_ne!(&data[21..29], &data256[21..29], "nonce endianness must produce distinct bytes");
+        assert_ne!(
+            &data[21..29],
+            &data256[21..29],
+            "nonce endianness must produce distinct bytes"
+        );
     }
 
     #[test]
@@ -123,7 +127,10 @@ mod tests {
         // Inconsistency preserved — unification deferred to Phase 9.
         assert_eq!(constants::TCP_FRAME_HEADER_LEN, 4);
         assert_eq!(constants::NOISE_FRAME_HEADER_LEN, 2);
-        assert_ne!(constants::TCP_FRAME_HEADER_LEN, constants::NOISE_FRAME_HEADER_LEN);
+        assert_ne!(
+            constants::TCP_FRAME_HEADER_LEN,
+            constants::NOISE_FRAME_HEADER_LEN
+        );
     }
 
     // ── Version ───────────────────────────────────────────────────────────────
@@ -131,7 +138,10 @@ mod tests {
     #[test]
     fn wire_version_negotiate_returns_min() {
         use version::WireVersion;
-        assert_eq!(WireVersion::negotiate(WireVersion::V1, WireVersion::V1), WireVersion::V1);
+        assert_eq!(
+            WireVersion::negotiate(WireVersion::V1, WireVersion::V1),
+            WireVersion::V1
+        );
     }
 
     #[test]

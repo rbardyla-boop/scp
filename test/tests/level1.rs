@@ -44,8 +44,12 @@ fn workspace_bin(name: &str) -> PathBuf {
     p
 }
 
-fn relay_bin() -> PathBuf { workspace_bin("scp-relay") }
-fn cli_bin()   -> PathBuf { workspace_bin("scp-cli") }
+fn relay_bin() -> PathBuf {
+    workspace_bin("scp-relay")
+}
+fn cli_bin() -> PathBuf {
+    workspace_bin("scp-cli")
+}
 
 fn bins_exist() -> bool {
     relay_bin().exists() && cli_bin().exists()
@@ -75,7 +79,10 @@ fn cleanup(dir: &PathBuf) {
 
 async fn wait_for_relay(port: u16) {
     for _ in 0..50 {
-        if tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await.is_ok() {
+        if tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .is_ok()
+        {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -104,7 +111,9 @@ fn extract_mailbox_id(output: &str) -> String {
     // Output is one compact JSON line per event.
     for line in output.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if let Some(id) = extract_json_field(line, "mailbox_id") {
             return id;
         }
@@ -119,7 +128,14 @@ fn extract_mailbox_id(output: &str) -> String {
 }
 
 fn contains_vocabulary_label(text: &str) -> bool {
-    let labels = ["Active", "Warm", "Dormant", "Suspended", "Severed", "Burned"];
+    let labels = [
+        "Active",
+        "Warm",
+        "Dormant",
+        "Suspended",
+        "Severed",
+        "Burned",
+    ];
     labels.iter().any(|&l| text.contains(l))
 }
 
@@ -133,11 +149,12 @@ async fn level1_multiprocess_exchange_full_flow() {
     }
 
     let port = free_port();
-    let tmp  = test_tmp_dir(&format!("{port}a"));
+    let tmp = test_tmp_dir(&format!("{port}a"));
 
     // Start relay.
     let mut relay = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port}"))
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -146,15 +163,14 @@ async fn level1_multiprocess_exchange_full_flow() {
     wait_for_relay(port).await;
 
     let alice_key = tmp.join("alice.key");
-    let bob_key   = tmp.join("bob.key");
-    let bob_card  = tmp.join("bob.card");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
 
     // keygen for Alice and Bob.
     let (ok, _) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
     assert!(ok, "alice keygen must succeed");
 
-    let (ok, bob_card_output) =
-        cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
+    let (ok, bob_card_output) = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
     assert!(ok, "bob keygen must succeed");
 
     // Save Bob's card JSON (the stdout of keygen is the public card event).
@@ -169,22 +185,35 @@ async fn level1_multiprocess_exchange_full_flow() {
     let relay_addr = format!("127.0.0.1:{port}");
     let (ok, send_output) = cli_run(&[
         "send",
-        "--identity", alice_key.to_str().unwrap(),
-        "--recipient", bob_card.to_str().unwrap(),
-        "--relay",    &relay_addr,
-        "--mailbox",  &mailbox_id,
-        "--message",  "hello scp level1",
-    ]).await;
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--message",
+        "hello scp level1",
+    ])
+    .await;
     assert!(ok, "send must succeed\nsend output: {send_output}");
-    assert!(send_output.contains("burst_stored"), "send output must confirm burst_stored");
+    assert!(
+        send_output.contains("burst_stored"),
+        "send output must confirm burst_stored"
+    );
 
     // B polls relay and decrypts.
     let (ok, recv_output) = cli_run(&[
         "receive",
-        "--identity", bob_key.to_str().unwrap(),
-        "--relay",    &relay_addr,
-        "--mailbox",  &mailbox_id,
-    ]).await;
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
     assert!(ok, "receive must succeed\nrecv output: {recv_output}");
 
     // Plaintext equality.
@@ -194,7 +223,10 @@ async fn level1_multiprocess_exchange_full_flow() {
     );
 
     // exchange_complete event must appear.
-    assert!(recv_output.contains("exchange_complete"), "exchange_complete must appear");
+    assert!(
+        recv_output.contains("exchange_complete"),
+        "exchange_complete must appear"
+    );
 
     // No vocabulary labels anywhere in any output.
     for output in &[send_output, recv_output, mailbox_output, bob_card_output] {
@@ -212,13 +244,16 @@ async fn level1_multiprocess_exchange_full_flow() {
 
 #[tokio::test]
 async fn level1_wrong_mailbox_token_produces_empty_receive() {
-    if !bins_exist() { return; }
+    if !bins_exist() {
+        return;
+    }
 
     let port = free_port();
-    let tmp  = test_tmp_dir(&format!("{port}b"));
+    let tmp = test_tmp_dir(&format!("{port}b"));
 
     let mut relay = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port}"))
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -226,8 +261,8 @@ async fn level1_wrong_mailbox_token_produces_empty_receive() {
     wait_for_relay(port).await;
 
     let alice_key = tmp.join("alice.key");
-    let bob_key   = tmp.join("bob.key");
-    let bob_card  = tmp.join("bob.card");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
 
     let (_, _) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
     let (_, bob_out) = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
@@ -240,12 +275,18 @@ async fn level1_wrong_mailbox_token_produces_empty_receive() {
     let relay_addr = format!("127.0.0.1:{port}");
     cli_run(&[
         "send",
-        "--identity", alice_key.to_str().unwrap(),
-        "--recipient", bob_card.to_str().unwrap(),
-        "--relay",    &relay_addr,
-        "--mailbox",  &correct_id,
-        "--message",  "wrong token test",
-    ]).await;
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &correct_id,
+        "--message",
+        "wrong token test",
+    ])
+    .await;
 
     // B polls with a DIFFERENT mailbox token.
     let (_, wrong_out) = cli_run(&["mailbox-new"]).await;
@@ -253,10 +294,14 @@ async fn level1_wrong_mailbox_token_produces_empty_receive() {
 
     let (ok, recv_output) = cli_run(&[
         "receive",
-        "--identity", bob_key.to_str().unwrap(),
-        "--relay",    &relay_addr,
-        "--mailbox",  &wrong_id,
-    ]).await;
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &wrong_id,
+    ])
+    .await;
     assert!(ok, "receive with wrong token must exit cleanly");
     // Should see exchange_complete with count 0.
     assert!(
@@ -276,13 +321,16 @@ async fn level1_wrong_mailbox_token_produces_empty_receive() {
 
 #[tokio::test]
 async fn level1_relay_restart_clears_mailbox() {
-    if !bins_exist() { return; }
+    if !bins_exist() {
+        return;
+    }
 
     let port = free_port();
-    let tmp  = test_tmp_dir(&format!("{port}c"));
+    let tmp = test_tmp_dir(&format!("{port}c"));
 
     let mut relay = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port}"))
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -290,8 +338,8 @@ async fn level1_relay_restart_clears_mailbox() {
     wait_for_relay(port).await;
 
     let alice_key = tmp.join("alice.key");
-    let bob_key   = tmp.join("bob.key");
-    let bob_card  = tmp.join("bob.card");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
 
     let (_, _) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
     let (_, bob_out) = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
@@ -303,12 +351,18 @@ async fn level1_relay_restart_clears_mailbox() {
     let relay_addr = format!("127.0.0.1:{port}");
     cli_run(&[
         "send",
-        "--identity", alice_key.to_str().unwrap(),
-        "--recipient", bob_card.to_str().unwrap(),
-        "--relay",    &relay_addr,
-        "--mailbox",  &mailbox_id,
-        "--message",  "restart test",
-    ]).await;
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--message",
+        "restart test",
+    ])
+    .await;
 
     // Kill relay — all in-memory bursts are lost (documented limitation).
     relay.kill().await.ok();
@@ -316,7 +370,8 @@ async fn level1_relay_restart_clears_mailbox() {
 
     // Restart relay on the same port.
     let mut relay2 = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port}"))
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -326,10 +381,14 @@ async fn level1_relay_restart_clears_mailbox() {
     // B polls after restart — mailbox should be empty.
     let (ok, recv_output) = cli_run(&[
         "receive",
-        "--identity", bob_key.to_str().unwrap(),
-        "--relay",    &relay_addr,
-        "--mailbox",  &mailbox_id,
-    ]).await;
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
     assert!(ok, "receive after restart must exit cleanly");
     assert!(
         recv_output.contains("\"count\":0"),
@@ -344,13 +403,16 @@ async fn level1_relay_restart_clears_mailbox() {
 
 #[tokio::test]
 async fn level1_no_vocabulary_labels_in_output() {
-    if !bins_exist() { return; }
+    if !bins_exist() {
+        return;
+    }
 
     let port = free_port();
-    let tmp  = test_tmp_dir(&format!("{port}d"));
+    let tmp = test_tmp_dir(&format!("{port}d"));
 
     let mut relay = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port}"))
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -358,27 +420,42 @@ async fn level1_no_vocabulary_labels_in_output() {
     wait_for_relay(port).await;
 
     let alice_key = tmp.join("alice.key");
-    let bob_key   = tmp.join("bob.key");
-    let bob_card  = tmp.join("bob.card");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
 
     let (_, alice_out) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
-    let (_, bob_out)   = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
+    let (_, bob_out) = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
     std::fs::write(&bob_card, &bob_out).unwrap();
 
-    let (_, mb_out)   = cli_run(&["mailbox-new"]).await;
-    let mailbox_id    = extract_mailbox_id(&mb_out);
-    let relay_addr    = format!("127.0.0.1:{port}");
+    let (_, mb_out) = cli_run(&["mailbox-new"]).await;
+    let mailbox_id = extract_mailbox_id(&mb_out);
+    let relay_addr = format!("127.0.0.1:{port}");
 
     let (_, send_out) = cli_run(&[
-        "send", "--identity", alice_key.to_str().unwrap(),
-        "--recipient", bob_card.to_str().unwrap(),
-        "--relay", &relay_addr, "--mailbox", &mailbox_id, "--message", "vocab test",
-    ]).await;
+        "send",
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--message",
+        "vocab test",
+    ])
+    .await;
 
     let (_, recv_out) = cli_run(&[
-        "receive", "--identity", bob_key.to_str().unwrap(),
-        "--relay", &relay_addr, "--mailbox", &mailbox_id,
-    ]).await;
+        "receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
 
     let all_output = format!("{alice_out}{bob_out}{mb_out}{send_out}{recv_out}");
     assert!(
@@ -389,6 +466,3 @@ async fn level1_no_vocabulary_labels_in_output() {
     relay.kill().await.ok();
     cleanup(&tmp);
 }
-
-// Bring in serde_json for JSON parsing helpers used in this file.
-use serde_json;

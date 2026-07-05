@@ -26,24 +26,27 @@
 // Integer counter assertions are exact.
 // Float assertions: (value - expected).abs() < 1e-12 tolerance.
 
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 
+use scp_cryptography::keys::KeyPair;
+use scp_ledger_substrate::{tunnel_consent_hash, SubstrateLedger, TunnelConsent};
 use scp_provider_pool::{AdmissibilityError, ProviderPool, SamplingStrategy};
 use scp_vitality::SimVitalityEvaluationContext;
-use scp_ledger_substrate::{SubstrateLedger, TunnelConsent, tunnel_consent_hash};
-use scp_cryptography::keys::KeyPair;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-fn pid(byte: u8) -> [u8; 32] { [byte; 32] }
+fn pid(byte: u8) -> [u8; 32] {
+    [byte; 32]
+}
 
-fn seeded() -> StdRng { StdRng::seed_from_u64(0) }
+fn seeded() -> StdRng {
+    StdRng::seed_from_u64(0)
+}
 
 /// Pool with admissible tracking enabled. Bound large enough for all tc tests.
 fn pool_adm(k: usize, providers: &[u8]) -> ProviderPool<SubstrateLedger> {
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(k))
-        .with_admissible_tracking(1024);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(k)).with_admissible_tracking(1024);
     for &b in providers {
         pool.add(pid(b), SubstrateLedger::new());
     }
@@ -76,8 +79,11 @@ fn tc1_duplicate_failure_rejected() {
     let receipt = receipts.into_iter().next().unwrap();
 
     // First failure presentation: accepted.
-    assert_eq!(pool.record_admissible_failure(&receipt), Ok(()),
-        "First presentation to record_admissible_failure must succeed");
+    assert_eq!(
+        pool.record_admissible_failure(&receipt),
+        Ok(()),
+        "First presentation to record_admissible_failure must succeed"
+    );
 
     // Second presentation with same (now-consumed) receipt: rejected.
     assert_eq!(
@@ -90,12 +96,15 @@ fn tc1_duplicate_failure_rejected() {
     // This test proves the counter is not inflated; it does not distinguish rejection reasons.
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_failure_total, 1,
-        "duplicate failure rejection: admissible_failure_total must remain 1");
-    assert_eq!(snap.admissible_response_total, 0,
-        "no responses recorded");
-    assert_eq!(snap.admissible_selection_total, 1,
-        "admissible_selection_total = 1 (one receipt was issued)");
+    assert_eq!(
+        snap.admissible_failure_total, 1,
+        "duplicate failure rejection: admissible_failure_total must remain 1"
+    );
+    assert_eq!(snap.admissible_response_total, 0, "no responses recorded");
+    assert_eq!(
+        snap.admissible_selection_total, 1,
+        "admissible_selection_total = 1 (one receipt was issued)"
+    );
 }
 
 // ── TC2: Failure after accepted response rejected ──────────────────────────────
@@ -119,8 +128,11 @@ fn tc2_failure_after_accepted_response_rejected() {
     let receipt = receipts.into_iter().next().unwrap();
 
     // Consume via response.
-    assert_eq!(pool.record_admissible_response(&receipt), Ok(()),
-        "Response presentation must succeed");
+    assert_eq!(
+        pool.record_admissible_response(&receipt),
+        Ok(()),
+        "Response presentation must succeed"
+    );
 
     // Attempt failure after response consumed the receipt.
     assert_eq!(
@@ -130,10 +142,14 @@ fn tc2_failure_after_accepted_response_rejected() {
     );
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 1,
-        "admissible_response_total = 1 — response was accepted");
-    assert_eq!(snap.admissible_failure_total, 0,
-        "admissible_failure_total must remain 0 — failure after response rejected");
+    assert_eq!(
+        snap.admissible_response_total, 1,
+        "admissible_response_total = 1 — response was accepted"
+    );
+    assert_eq!(
+        snap.admissible_failure_total, 0,
+        "admissible_failure_total must remain 0 — failure after response rejected"
+    );
     assert_eq!(snap.admissible_selection_total, 1);
 }
 
@@ -167,16 +183,23 @@ fn tc3_wrong_provider_failure_rejected() {
     );
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_failure_total, 0,
-        "ProviderMismatch rejection must not increment admissible_failure_total");
+    assert_eq!(
+        snap.admissible_failure_total, 0,
+        "ProviderMismatch rejection must not increment admissible_failure_total"
+    );
     assert_eq!(snap.admissible_response_total, 0);
 
     // Original receipt must still be outstanding — ProviderMismatch does not consume it.
-    assert_eq!(pool.record_admissible_response(&original), Ok(()),
-        "Original receipt must still be outstanding after ProviderMismatch rejection");
+    assert_eq!(
+        pool.record_admissible_response(&original),
+        Ok(()),
+        "Original receipt must still be outstanding after ProviderMismatch rejection"
+    );
     let snap2 = pool.operational_telemetry();
-    assert_eq!(snap2.admissible_response_total, 1,
-        "Original receipt accepted after wrong-provider failure was rejected");
+    assert_eq!(
+        snap2.admissible_response_total, 1,
+        "Original receipt accepted after wrong-provider failure was rejected"
+    );
 }
 
 // ── TC4: Symmetric suppression — raw vs admissible dual-surface comparison ─────
@@ -222,20 +245,28 @@ fn tc4_symmetric_suppression_raw_vs_admissible() {
     let snap = pool.operational_telemetry();
 
     // Both surfaces report 0.5.
-    assert_eq!(snap.selection_total, 4,
-        "selection_total = 4 — one per sample_with_receipts() call");
-    assert_eq!(snap.response_total, 2,
-        "raw response_total = 2 — from the 2 record_response() calls");
+    assert_eq!(
+        snap.selection_total, 4,
+        "selection_total = 4 — one per sample_with_receipts() call"
+    );
+    assert_eq!(
+        snap.response_total, 2,
+        "raw response_total = 2 — from the 2 record_response() calls"
+    );
     assert_eq!(
         snap.recent_reported_response_ratio(),
         Some(0.5),
         "raw ratio = 2/4 = 0.5 on honest partial reporting"
     );
 
-    assert_eq!(snap.admissible_selection_total, 4,
-        "admissible_selection_total = 4");
-    assert_eq!(snap.admissible_response_total, 2,
-        "admissible_response_total = 2");
+    assert_eq!(
+        snap.admissible_selection_total, 4,
+        "admissible_selection_total = 4"
+    );
+    assert_eq!(
+        snap.admissible_response_total, 2,
+        "admissible_response_total = 2"
+    );
     assert_eq!(
         snap.recent_admissible_response_ratio(),
         Some(0.5),
@@ -277,11 +308,15 @@ fn tc5_unpaired_failure_injection_raw_vs_admissible() {
     let snap = pool.operational_telemetry();
 
     // Admissible surface is untouched.
-    assert_eq!(snap.admissible_failure_total, 0,
-        "unpaired record_failure() calls must not touch admissible_failure_total");
+    assert_eq!(
+        snap.admissible_failure_total, 0,
+        "unpaired record_failure() calls must not touch admissible_failure_total"
+    );
     assert_eq!(snap.admissible_response_total, 0);
-    assert_eq!(snap.admissible_selection_total, 0,
-        "no receipts issued: admissible_selection_total = 0");
+    assert_eq!(
+        snap.admissible_selection_total, 0,
+        "no receipts issued: admissible_selection_total = 0"
+    );
     assert_eq!(
         snap.recent_admissible_response_ratio(),
         None,
@@ -292,8 +327,10 @@ fn tc5_unpaired_failure_injection_raw_vs_admissible() {
     // (record_failure updates liveness state but not ExposureTracker counts).
     // The discrepancy is visible: admissible surface shows no failures because it
     // requires receipt pairing, while raw liveness state tracks consecutive failures.
-    assert_eq!(snap.selection_total, 0,
-        "record_failure() does not increment selection_total");
+    assert_eq!(
+        snap.selection_total, 0,
+        "record_failure() does not increment selection_total"
+    );
     // Injection leaves no trace on admissible surface — manipulation class demonstrated.
 }
 
@@ -326,8 +363,11 @@ fn tc6_duplicate_response_raw_vs_admissible() {
 
     // Second admissible response: rejected (Err) — does not inflate counter.
     let second = pool.record_admissible_response(&receipt);
-    assert_eq!(second, Err(AdmissibilityError::UnknownReceipt),
-        "Second admissible response for consumed receipt must return UnknownReceipt");
+    assert_eq!(
+        second,
+        Err(AdmissibilityError::UnknownReceipt),
+        "Second admissible response for consumed receipt must return UnknownReceipt"
+    );
 
     // Two raw response calls (both succeed — raw has no deduplication).
     pool.record_response(selected_pid);
@@ -335,12 +375,18 @@ fn tc6_duplicate_response_raw_vs_admissible() {
 
     let snap = pool.operational_telemetry();
 
-    assert_eq!(snap.response_total, 2,
-        "raw response_total = 2 — raw can be inflated by duplicate recording");
-    assert_eq!(snap.admissible_response_total, 1,
-        "admissible_response_total = 1 — duplicate rejection preserved the count");
-    assert_eq!(snap.admissible_selection_total, 1,
-        "admissible_selection_total = 1 — selection count unaffected by outcome attempts");
+    assert_eq!(
+        snap.response_total, 2,
+        "raw response_total = 2 — raw can be inflated by duplicate recording"
+    );
+    assert_eq!(
+        snap.admissible_response_total, 1,
+        "admissible_response_total = 1 — duplicate rejection preserved the count"
+    );
+    assert_eq!(
+        snap.admissible_selection_total, 1,
+        "admissible_selection_total = 1 — selection count unaffected by outcome attempts"
+    );
 
     // Dual-surface discrepancy: raw inflated, admissible intact.
     assert!(
@@ -385,7 +431,11 @@ fn tc7_stale_epoch_raw_vs_admissible() {
 
     // Rotate: epoch_count 0 → 1; outstanding receipts drained.
     pool.force_rotate(&mut rng);
-    assert_eq!(pool.epoch_count(), 1, "force_rotate must advance epoch_count to 1");
+    assert_eq!(
+        pool.epoch_count(),
+        1,
+        "force_rotate must advance epoch_count to 1"
+    );
 
     // Admissible path: stale receipt rejected.
     assert_eq!(
@@ -395,18 +445,26 @@ fn tc7_stale_epoch_raw_vs_admissible() {
     );
 
     let snap_adm = pool.operational_telemetry();
-    assert_eq!(snap_adm.admissible_response_total, 0,
-        "Stale-epoch rejection must not increment admissible_response_total");
-    assert_eq!(snap_adm.selection_total, 1,
-        "raw selection_total = 1 from the initial sample_with_receipts() call");
+    assert_eq!(
+        snap_adm.admissible_response_total, 0,
+        "Stale-epoch rejection must not increment admissible_response_total"
+    );
+    assert_eq!(
+        snap_adm.selection_total, 1,
+        "raw selection_total = 1 from the initial sample_with_receipts() call"
+    );
 
     // Raw path: record_response() is epoch-independent.
     pool.record_response(selected_pid);
     let snap_raw = pool.operational_telemetry();
-    assert_eq!(snap_raw.response_total, 1,
-        "raw record_response() after rotation must be accepted — raw is epoch-agnostic");
-    assert_eq!(snap_raw.admissible_response_total, 0,
-        "admissible surface still 0 after raw response injection");
+    assert_eq!(
+        snap_raw.response_total, 1,
+        "raw record_response() after rotation must be accepted — raw is epoch-agnostic"
+    );
+    assert_eq!(
+        snap_raw.admissible_response_total, 0,
+        "admissible surface still 0 after raw response injection"
+    );
 
     // Dual-surface: raw responds, admissible does not.
     assert!(
@@ -437,8 +495,7 @@ fn tc7_stale_epoch_raw_vs_admissible() {
 fn tc8_outstanding_accumulates_until_bound() {
     let mut rng = seeded();
     let bound: usize = 20;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_admissible_tracking(bound);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_admissible_tracking(bound);
     for i in 1u8..=8 {
         pool.add(pid(i), SubstrateLedger::new());
     }
@@ -446,15 +503,24 @@ fn tc8_outstanding_accumulates_until_bound() {
     // Issue receipts one by one up to the bound without presenting any outcomes.
     for i in 0..bound {
         let result = pool.sample_with_receipts(&mut rng);
-        assert!(result.is_ok(),
-            "Receipt issuance {} (of {}) below bound must succeed", i + 1, bound);
+        assert!(
+            result.is_ok(),
+            "Receipt issuance {} (of {}) below bound must succeed",
+            i + 1,
+            bound
+        );
     }
 
     let snap_at_bound = pool.operational_telemetry();
-    assert_eq!(snap_at_bound.admissible_selection_total, bound as u64,
-        "admissible_selection_total must equal bound after {} successful issuances", bound);
-    assert_eq!(snap_at_bound.selection_total, bound as u64,
-        "raw selection_total must equal bound — one raw accounting per sample");
+    assert_eq!(
+        snap_at_bound.admissible_selection_total, bound as u64,
+        "admissible_selection_total must equal bound after {} successful issuances",
+        bound
+    );
+    assert_eq!(
+        snap_at_bound.selection_total, bound as u64,
+        "raw selection_total must equal bound — one raw accounting per sample"
+    );
 
     // Next attempt: capacity exhausted.
     let refused = pool.sample_with_receipts(&mut rng);
@@ -465,14 +531,21 @@ fn tc8_outstanding_accumulates_until_bound() {
 
     // Raw and admissible counters unchanged by the refused call.
     let snap_after = pool.operational_telemetry();
-    assert_eq!(snap_after.admissible_selection_total, bound as u64,
-        "admissible_selection_total unchanged by refused call");
-    assert_eq!(snap_after.selection_total, bound as u64,
-        "raw selection_total unchanged by refused call (no selection occurred)");
+    assert_eq!(
+        snap_after.admissible_selection_total, bound as u64,
+        "admissible_selection_total unchanged by refused call"
+    );
+    assert_eq!(
+        snap_after.selection_total, bound as u64,
+        "raw selection_total unchanged by refused call (no selection occurred)"
+    );
 
     // No rotation triggered by outstanding growth.
-    assert_eq!(pool.epoch_count(), 0,
-        "No automatic rotation must occur from outstanding receipt accumulation");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "No automatic rotation must occur from outstanding receipt accumulation"
+    );
 }
 
 // ── TC9: Epoch drain clears all outstanding receipts; next_observation_id preserved
@@ -510,13 +583,20 @@ fn tc9_drain_epoch_clears_all_outstanding() {
 
     // Capacity is full.
     assert!(
-        matches!(pool.sample_with_receipts(&mut rng), Err(AdmissibilityError::ReceiptCapacityExhausted)),
+        matches!(
+            pool.sample_with_receipts(&mut rng),
+            Err(AdmissibilityError::ReceiptCapacityExhausted)
+        ),
         "Capacity must be full before rotation"
     );
 
     // Rotate: drain_epoch() clears all outstanding receipts.
     pool.force_rotate(&mut rng);
-    assert_eq!(pool.epoch_count(), 1, "force_rotate must advance epoch_count to 1");
+    assert_eq!(
+        pool.epoch_count(),
+        1,
+        "force_rotate must advance epoch_count to 1"
+    );
 
     // Old receipts are stale — epoch check fires before observation_id lookup.
     for r in &old_receipts {
@@ -529,24 +609,37 @@ fn tc9_drain_epoch_clears_all_outstanding() {
 
     // Admissible counters preserved (Never reset policy) — drain does not zero totals.
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_selection_total, 3,
-        "admissible_selection_total preserved across drain (ExposureResetPolicy::Never)");
-    assert_eq!(snap.admissible_response_total, 0,
-        "no responses were presented before drain");
+    assert_eq!(
+        snap.admissible_selection_total, 3,
+        "admissible_selection_total preserved across drain (ExposureResetPolicy::Never)"
+    );
+    assert_eq!(
+        snap.admissible_response_total, 0,
+        "no responses were presented before drain"
+    );
 
     // Capacity restored: new sample_with_receipts() must succeed.
     let result = pool.sample_with_receipts(&mut rng);
-    assert!(result.is_ok(), "After drain, sample_with_receipts() must succeed");
+    assert!(
+        result.is_ok(),
+        "After drain, sample_with_receipts() must succeed"
+    );
     let (_q_new, new_receipts) = result.unwrap();
     assert_eq!(new_receipts.len(), 1, "New sample must issue 1 receipt");
 
     // next_observation_id was NOT reset: new receipt's observation_id is > 2
     // (we issued 3 receipts with oids 0, 1, 2 before drain; new one must be 3 or higher).
     let new_oid = new_receipts[0].observation_id();
-    assert!(new_oid >= 3,
-        "next_observation_id must not be reset on drain: new oid={} must be >= 3", new_oid);
-    assert_eq!(new_receipts[0].epoch_count(), 1,
-        "New receipt must carry the new epoch_count = 1");
+    assert!(
+        new_oid >= 3,
+        "next_observation_id must not be reset on drain: new oid={} must be >= 3",
+        new_oid
+    );
+    assert_eq!(
+        new_receipts[0].epoch_count(),
+        1,
+        "New receipt must carry the new epoch_count = 1"
+    );
 }
 
 // ── TC10: Finite bound fires at configured limit, not before ───────────────────
@@ -574,8 +667,7 @@ fn tc9_drain_epoch_clears_all_outstanding() {
 fn tc10_outstanding_bounded_by_max_not_automatic_eviction() {
     let mut rng = seeded();
     let bound: usize = 10;
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_admissible_tracking(bound);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_admissible_tracking(bound);
     for i in 1u8..=6 {
         pool.add(pid(i), SubstrateLedger::new());
     }
@@ -583,14 +675,27 @@ fn tc10_outstanding_bounded_by_max_not_automatic_eviction() {
     // Issue exactly `bound` receipts — every one must succeed.
     for i in 0..bound {
         let result = pool.sample_with_receipts(&mut rng);
-        assert!(result.is_ok(),
-            "Issuance {} of {} (below/at bound) must succeed; bound={}", i + 1, bound, bound);
+        assert!(
+            result.is_ok(),
+            "Issuance {} of {} (below/at bound) must succeed; bound={}",
+            i + 1,
+            bound,
+            bound
+        );
 
         let snap = pool.operational_telemetry();
-        assert_eq!(snap.admissible_selection_total, (i + 1) as u64,
-            "admissible_selection_total must be {} after {} issuances", i + 1, i + 1);
-        assert_eq!(pool.epoch_count(), 0,
-            "No rotation must be triggered during normal bounded issuance");
+        assert_eq!(
+            snap.admissible_selection_total,
+            (i + 1) as u64,
+            "admissible_selection_total must be {} after {} issuances",
+            i + 1,
+            i + 1
+        );
+        assert_eq!(
+            pool.epoch_count(),
+            0,
+            "No rotation must be triggered during normal bounded issuance"
+        );
     }
 
     // The (bound+1)-th issuance must be refused.
@@ -606,12 +711,19 @@ fn tc10_outstanding_bounded_by_max_not_automatic_eviction() {
     }
 
     let snap_final = pool.operational_telemetry();
-    assert_eq!(snap_final.admissible_selection_total, bound as u64,
-        "Multiple refused calls must not change admissible_selection_total");
-    assert_eq!(snap_final.selection_total, bound as u64,
-        "Multiple refused calls must not change selection_total");
-    assert_eq!(pool.epoch_count(), 0,
-        "No rotation triggered by capacity refusals");
+    assert_eq!(
+        snap_final.admissible_selection_total, bound as u64,
+        "Multiple refused calls must not change admissible_selection_total"
+    );
+    assert_eq!(
+        snap_final.selection_total, bound as u64,
+        "Multiple refused calls must not change selection_total"
+    );
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "No rotation triggered by capacity refusals"
+    );
 }
 
 // ── TC11: Admissible surface read-only after full injection trace ──────────────
@@ -644,8 +756,8 @@ fn tc10_outstanding_bounded_by_max_not_automatic_eviction() {
 fn tc11_admissible_surface_read_only_after_injection_trace() {
     use scp_cryptography::x25519_generate_keypair;
     use scp_ledger_substrate::{HandshakeEphemeral, SubstrateLedger};
-    use scp_wire_format::signing::handshake_sig_message;
     use scp_vitality::VitalityEvidenceStore;
+    use scp_wire_format::signing::handshake_sig_message;
 
     let mut rng = seeded();
     let mut pool = pool_adm(1, &[1, 2, 3, 4]);
@@ -675,8 +787,11 @@ fn tc11_admissible_surface_read_only_after_injection_trace() {
     }
 
     // No rotation must have been triggered.
-    assert_eq!(pool.epoch_count(), 0,
-        "No injection or admissible call must trigger automatic rotation: epoch_count = 0");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "No injection or admissible call must trigger automatic rotation: epoch_count = 0"
+    );
 
     let snap = pool.operational_telemetry();
 
@@ -691,10 +806,14 @@ fn tc11_admissible_surface_read_only_after_injection_trace() {
 
     // Raw surface: injection inflated it.
     // raw response_total = 8 (injected); selection_total = 8 (from sample_with_receipts()).
-    assert_eq!(snap.response_total, 8,
-        "raw response_total = 8 from injected record_response() calls");
-    assert_eq!(snap.selection_total, 8,
-        "selection_total = 8 from 8 sample_with_receipts() calls");
+    assert_eq!(
+        snap.response_total, 8,
+        "raw response_total = 8 from injected record_response() calls"
+    );
+    assert_eq!(
+        snap.selection_total, 8,
+        "selection_total = 8 from 8 sample_with_receipts() calls"
+    );
     assert_eq!(
         snap.recent_reported_response_ratio(),
         Some(1.0),
@@ -717,10 +836,12 @@ fn tc11_admissible_surface_read_only_after_injection_trace() {
         let consent = TunnelConsent {
             party_a: kp_a.public,
             party_b: kp_b.public,
-            sig_a:   kp_a.sign(&consent_hash).to_vec(),
-            sig_b:   kp_b.sign(&consent_hash).to_vec(),
+            sig_a: kp_a.sign(&consent_hash).to_vec(),
+            sig_b: kp_b.sign(&consent_hash).to_vec(),
         };
-        ledger.register_tunnel(consent).expect("bilateral tunnel registration must succeed");
+        ledger
+            .register_tunnel(consent)
+            .expect("bilateral tunnel registration must succeed");
         consent_hash
     };
     let (_, eph_pub) = x25519_generate_keypair();
@@ -728,20 +849,24 @@ fn tc11_admissible_surface_read_only_after_injection_trace() {
     let expires_at = sim_now + 3_600;
     let sig: [u8; 64] = kp_a.sign(&handshake_sig_message(&eph_pub, expires_at));
     let eph = HandshakeEphemeral {
-        pub_key:      eph_pub,
-        sig:          sig.to_vec(),
+        pub_key: eph_pub,
+        sig: sig.to_vec(),
         published_at: sim_now,
         expires_at,
     };
-    ledger.publish_handshake_ephemeral(&kp_a.public, eph)
+    ledger
+        .publish_handshake_ephemeral(&kp_a.public, eph)
         .expect("ephemeral publish must succeed");
 
     // p = 0.0: declared constant, never derived from pool telemetry.
     let p_declared: f64 = 0.0;
     let ctx = SimVitalityEvaluationContext::new(ch, sim_now, 1.0, 1.0, p_declared)
         .expect("standard controls must be valid");
-    assert_eq!(ctx.p(), 0.0,
-        "p must equal the declared constant 0.0 — never derived from pool telemetry");
+    assert_eq!(
+        ctx.p(),
+        0.0,
+        "p must equal the declared constant 0.0 — never derived from pool telemetry"
+    );
 
     // Vitality evaluation is independent of pool telemetry.
     let store = VitalityEvidenceStore::new();
@@ -750,15 +875,20 @@ fn tc11_admissible_surface_read_only_after_injection_trace() {
 
     // Convergence pressure kappa: raw selection metric, not admission-surface derived.
     let pressure = pool.convergence_pressure();
-    assert!(pressure.kappa >= 0.0 && pressure.kappa <= 1.0,
-        "kappa must remain a raw selection entropy metric in [0.0, 1.0]");
+    assert!(
+        pressure.kappa >= 0.0 && pressure.kappa <= 1.0,
+        "kappa must remain a raw selection entropy metric in [0.0, 1.0]"
+    );
 
     // Structural proof: ConvergencePressure has no admissible_* field.
     // This compiles only because no such field was added to the type.
     let _ = pressure.liveness_weighted_kappa; // accessible raw field
-    // No admissible_* field on ConvergencePressure — proven by compilation.
+                                              // No admissible_* field on ConvergencePressure — proven by compilation.
 
     // Final guard: no rotation triggered by any path in this trace.
-    assert_eq!(pool.epoch_count(), 0,
-        "epoch_count must remain 0 after full injection trace");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "epoch_count must remain 0 after full injection trace"
+    );
 }

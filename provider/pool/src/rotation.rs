@@ -21,7 +21,10 @@ pub enum PoolRotationPolicy {
     /// jitter is redrawn fresh at every `maybe_rotate()` call. Prevents an
     /// observer from predicting rotation cadence from a fixed timer.
     /// When `base = Duration::ZERO`, fires on every call.
-    JitteredTimeBased { base: Duration, jitter_fraction: f64 },
+    JitteredTimeBased {
+        base: Duration,
+        jitter_fraction: f64,
+    },
     /// Rotate when consecutive epoch distributions are too similar (JSD below threshold).
     ///
     /// Fires when `JSD(current_distribution, previous_epoch_distribution) < min_divergence`.
@@ -67,7 +70,10 @@ pub enum PoolRotationPolicy {
     /// burst timing from rotation timing, raising forced-trajectory attack cost.
     ///
     /// Estimator-dependent: not admissible in PostReset or Reconverging.
-    BurstTriggered { min_burst_magnitude: f64, response_jitter_max: Duration },
+    BurstTriggered {
+        min_burst_magnitude: f64,
+        response_jitter_max: Duration,
+    },
 }
 
 /// Bounds on per-rotation provider replacement count.
@@ -97,7 +103,11 @@ pub enum ActivationStrategy {
     /// for dead providers. `liveness_discount = 0.0` means dead dormant providers
     /// are never activated; `liveness_discount = 1.0` is identical to
     /// `WeightedByReputation`.
-    WeightedComposite { influence: f64, floor: f64, liveness_discount: f64 },
+    WeightedComposite {
+        influence: f64,
+        floor: f64,
+        liveness_discount: f64,
+    },
     /// Damps activation probability of dormant providers over-exposed above `max_visibility_ratio`.
     ///
     /// Weight = `max(floor, min(1.0, cap / rate))` where `cap = max_visibility_ratio`.
@@ -105,7 +115,10 @@ pub enum ActivationStrategy {
     /// No provider reaches `weight = 0` because `floor > 0`.
     /// This discourages re-activating providers that already dominate the exposure
     /// distribution, reducing long-horizon posterior convergence.
-    VisibilityCapped { max_visibility_ratio: f64, floor: f64 },
+    VisibilityCapped {
+        max_visibility_ratio: f64,
+        floor: f64,
+    },
 }
 
 /// When (and whether) `do_rotate` resets the `ExposureTracker`.
@@ -167,17 +180,17 @@ pub enum DeferralReason {
 }
 
 pub(crate) struct PoolRotation {
-    pub(crate) policy:                   PoolRotationPolicy,
-    pub(crate) budget:                   ChurnBudget,
-    pub(crate) query_count:              u64,
-    pub(crate) last_rotation:            Instant,
-    pub(crate) activation:               ActivationStrategy,
-    pub(crate) reset_policy:             ExposureResetPolicy,
-    pub(crate) epoch_count:              u32,
-    pub(crate) previous_distribution:    Option<Vec<([u8; 32], f64)>>,
-    pub(crate) previous_kappa:           Option<f64>,
-    pub(crate) last_churn:               Option<usize>,
-    pub(crate) accumulated_kappa:        f64,
-    pub(crate) cooldown:                 Option<RotationCooldown>,
-    pub(crate) burst_response_deadline:  Option<Instant>,
+    pub(crate) policy: PoolRotationPolicy,
+    pub(crate) budget: ChurnBudget,
+    pub(crate) query_count: u64,
+    pub(crate) last_rotation: Instant,
+    pub(crate) activation: ActivationStrategy,
+    pub(crate) reset_policy: ExposureResetPolicy,
+    pub(crate) epoch_count: u32,
+    pub(crate) previous_distribution: Option<Vec<([u8; 32], f64)>>,
+    pub(crate) previous_kappa: Option<f64>,
+    pub(crate) last_churn: Option<usize>,
+    pub(crate) accumulated_kappa: f64,
+    pub(crate) cooldown: Option<RotationCooldown>,
+    pub(crate) burst_response_deadline: Option<Instant>,
 }

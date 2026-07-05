@@ -24,7 +24,11 @@ pub struct ReplayWindow {
 
 impl ReplayWindow {
     pub fn new() -> Self {
-        Self { max_seen: 0, bitmap: 0, initialized: false }
+        Self {
+            max_seen: 0,
+            bitmap: 0,
+            initialized: false,
+        }
     }
 
     /// Validate and record `nonce`. Returns `true` if accepted, `false` if
@@ -40,7 +44,11 @@ impl ReplayWindow {
         if nonce > self.max_seen {
             let shift = nonce - self.max_seen;
             // Shift window forward; clear vacated bits, mark current nonce.
-            self.bitmap = if shift >= 64 { 1u64 } else { (self.bitmap << shift) | 1u64 };
+            self.bitmap = if shift >= 64 {
+                1u64
+            } else {
+                (self.bitmap << shift) | 1u64
+            };
             self.max_seen = nonce;
             true
         } else {

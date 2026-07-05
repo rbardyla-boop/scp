@@ -28,13 +28,19 @@ pub struct SelectionReceipt {
 
 impl SelectionReceipt {
     /// The epoch counter value at the moment this receipt was issued.
-    pub fn epoch_count(&self) -> u32 { self.epoch_count }
+    pub fn epoch_count(&self) -> u32 {
+        self.epoch_count
+    }
 
     /// The monotone observation ID for this selection event.
-    pub fn observation_id(&self) -> u64 { self.observation_id }
+    pub fn observation_id(&self) -> u64 {
+        self.observation_id
+    }
 
     /// The provider ID encoded in this receipt.
-    pub fn provider_id(&self) -> [u8; 32] { self.provider_id }
+    pub fn provider_id(&self) -> [u8; 32] {
+        self.provider_id
+    }
 
     /// Returns a modified copy of this receipt with a different provider_id.
     ///
@@ -152,7 +158,8 @@ impl AdmissibleExposureTracker {
             return Err(AdmissibilityError::ReceiptCapacityExhausted);
         }
         let oid = self.next_observation_id;
-        self.next_observation_id = self.next_observation_id
+        self.next_observation_id = self
+            .next_observation_id
             .checked_add(1)
             .ok_or(AdmissibilityError::CounterExhausted)?;
         self.outstanding.insert(oid, provider_id);
@@ -174,7 +181,9 @@ impl AdmissibleExposureTracker {
             return Err(AdmissibilityError::StaleEpoch);
         }
         // Condition 2: receipt in outstanding map.
-        let stored_pid = self.outstanding.get(&receipt.observation_id)
+        let stored_pid = self
+            .outstanding
+            .get(&receipt.observation_id)
             .copied()
             .ok_or(AdmissibilityError::UnknownReceipt)?;
         // Condition 3: provider identity matches.
@@ -184,7 +193,10 @@ impl AdmissibleExposureTracker {
         // Condition 4: atomically remove (at-most-once).
         self.outstanding.remove(&receipt.observation_id);
         self.admissible_response_total += 1;
-        *self.admissible_appearances.entry(receipt.provider_id).or_insert(0) += 1;
+        *self
+            .admissible_appearances
+            .entry(receipt.provider_id)
+            .or_insert(0) += 1;
         Ok(())
     }
 
@@ -196,7 +208,9 @@ impl AdmissibleExposureTracker {
         if receipt.epoch_count != self.current_epoch_count {
             return Err(AdmissibilityError::StaleEpoch);
         }
-        let stored_pid = self.outstanding.get(&receipt.observation_id)
+        let stored_pid = self
+            .outstanding
+            .get(&receipt.observation_id)
             .copied()
             .ok_or(AdmissibilityError::UnknownReceipt)?;
         if stored_pid != receipt.provider_id {
@@ -217,7 +231,9 @@ impl AdmissibleExposureTracker {
         let should_reset = match &self.reset_policy {
             crate::rotation::ExposureResetPolicy::Never => false,
             crate::rotation::ExposureResetPolicy::OnRotation => true,
-            crate::rotation::ExposureResetPolicy::AfterEpochs { n } => new_epoch_count % n == 0,
+            crate::rotation::ExposureResetPolicy::AfterEpochs { n } => {
+                new_epoch_count.is_multiple_of(*n)
+            }
         };
         if should_reset {
             self.admissible_response_total = 0;
@@ -298,28 +314,28 @@ pub struct ExposureDistribution {
 }
 
 pub(crate) struct ExposureTracker {
-    pub(crate) appearances:               HashMap<[u8; 32], u64>,
-    pub(crate) total_samples:             u64,
-    pub(crate) smoothed_entropy:          f64,         // EWMA; NOT zeroed by reset() — anti-thrashing
-    pub(crate) ewma_alpha:                f64,         // default 1.0 = no smoothing (smoothed == raw)
-    pub(crate) decay_half_life_secs:      Option<u64>, // None = no decay
-    pub(crate) last_record_secs:          u64,         // wall-clock of most recent record() call
-    pub(crate) response_appearances:      HashMap<[u8; 32], u64>,
-    pub(crate) response_total:            u64,
-    pub(crate) response_smoothed_entropy: f64,         // EWMA; NOT zeroed by reset() — anti-thrashing
+    pub(crate) appearances: HashMap<[u8; 32], u64>,
+    pub(crate) total_samples: u64,
+    pub(crate) smoothed_entropy: f64, // EWMA; NOT zeroed by reset() — anti-thrashing
+    pub(crate) ewma_alpha: f64,       // default 1.0 = no smoothing (smoothed == raw)
+    pub(crate) decay_half_life_secs: Option<u64>, // None = no decay
+    pub(crate) last_record_secs: u64, // wall-clock of most recent record() call
+    pub(crate) response_appearances: HashMap<[u8; 32], u64>,
+    pub(crate) response_total: u64,
+    pub(crate) response_smoothed_entropy: f64, // EWMA; NOT zeroed by reset() — anti-thrashing
 }
 
 impl ExposureTracker {
     pub(crate) fn new() -> Self {
         Self {
-            appearances:               HashMap::new(),
-            total_samples:             0,
-            smoothed_entropy:          0.0,
-            ewma_alpha:                1.0,
-            decay_half_life_secs:      None,
-            last_record_secs:          0,
-            response_appearances:      HashMap::new(),
-            response_total:            0,
+            appearances: HashMap::new(),
+            total_samples: 0,
+            smoothed_entropy: 0.0,
+            ewma_alpha: 1.0,
+            decay_half_life_secs: None,
+            last_record_secs: 0,
+            response_appearances: HashMap::new(),
+            response_total: 0,
             response_smoothed_entropy: 0.0,
         }
     }
@@ -340,41 +356,57 @@ impl ExposureTracker {
         }
         self.last_record_secs = crate::now_secs();
         let raw = self.estimate_raw_entropy();
-        self.smoothed_entropy = self.ewma_alpha * raw
-            + (1.0 - self.ewma_alpha) * self.smoothed_entropy;
+        self.smoothed_entropy =
+            self.ewma_alpha * raw + (1.0 - self.ewma_alpha) * self.smoothed_entropy;
     }
 
     pub(crate) fn record_response(&mut self, provider_id: &[u8; 32]) {
         self.response_total += 1;
         *self.response_appearances.entry(*provider_id).or_insert(0) += 1;
         let raw = self.estimate_raw_response_entropy();
-        self.response_smoothed_entropy = self.ewma_alpha * raw
-            + (1.0 - self.ewma_alpha) * self.response_smoothed_entropy;
+        self.response_smoothed_entropy =
+            self.ewma_alpha * raw + (1.0 - self.ewma_alpha) * self.response_smoothed_entropy;
     }
 
     pub(crate) fn rate(&self, pid: &[u8; 32]) -> f64 {
-        if self.total_samples == 0 { return 0.0; }
+        if self.total_samples == 0 {
+            return 0.0;
+        }
         *self.appearances.get(pid).unwrap_or(&0) as f64 / self.total_samples as f64
     }
 
     fn estimate_raw_entropy(&self) -> f64 {
-        if self.total_samples == 0 { return 0.0; }
+        if self.total_samples == 0 {
+            return 0.0;
+        }
         let n = self.total_samples as f64;
-        self.appearances.values()
+        self.appearances
+            .values()
             .map(|&c| {
                 let p = c as f64 / n;
-                if p > 0.0 { -p * p.log2() } else { 0.0 }
+                if p > 0.0 {
+                    -p * p.log2()
+                } else {
+                    0.0
+                }
             })
             .sum()
     }
 
     fn estimate_raw_response_entropy(&self) -> f64 {
-        if self.response_total == 0 { return 0.0; }
+        if self.response_total == 0 {
+            return 0.0;
+        }
         let n = self.response_total as f64;
-        self.response_appearances.values()
+        self.response_appearances
+            .values()
             .map(|&c| {
                 let p = c as f64 / n;
-                if p > 0.0 { -p * p.log2() } else { 0.0 }
+                if p > 0.0 {
+                    -p * p.log2()
+                } else {
+                    0.0
+                }
             })
             .sum()
     }
@@ -385,7 +417,8 @@ impl ExposureTracker {
             0.0
         } else {
             let n = self.total_samples as f64;
-            self.appearances.values()
+            self.appearances
+                .values()
                 .map(|&c| c as f64 / n)
                 .fold(0.0f64, f64::max)
         };
@@ -397,14 +430,14 @@ impl ExposureTracker {
             }
         };
         ExposureEstimate {
-            selection_entropy_bits:          raw,
+            selection_entropy_bits: raw,
             smoothed_selection_entropy_bits: self.smoothed_entropy,
-            max_selection_rate:              max_rate,
-            total_samples:                   self.total_samples,
-            effective_total_samples:         effective,
-            response_entropy_bits:           self.estimate_raw_response_entropy(),
-            smoothed_response_entropy_bits:  self.response_smoothed_entropy,
-            response_total_samples:          self.response_total,
+            max_selection_rate: max_rate,
+            total_samples: self.total_samples,
+            effective_total_samples: effective,
+            response_entropy_bits: self.estimate_raw_response_entropy(),
+            smoothed_response_entropy_bits: self.response_smoothed_entropy,
+            response_total_samples: self.response_total,
         }
     }
 
@@ -418,7 +451,9 @@ impl ExposureTracker {
             return ExposureDistribution { rates: Vec::new() };
         }
         let n = total_appearances as f64;
-        let rates = self.appearances.iter()
+        let rates = self
+            .appearances
+            .iter()
             .map(|(id, &c)| (*id, c as f64 / n))
             .collect();
         ExposureDistribution { rates }

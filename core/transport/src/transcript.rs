@@ -16,10 +16,10 @@ pub use v2::FlashTranscriptV2;
 pub struct TransportKeyMaterial {
     /// v1: random 32 bytes from OsRng (forward secrecy via entropy).
     /// v2: raw X25519 DH output (forward secrecy via bilateral contribution).
-    pub ephemeral_seed:    [u8; 32],
+    pub ephemeral_seed: [u8; 32],
     /// FlashTranscript::hash() or FlashTranscriptV2::hash() —
     /// binds the key to its exact (route, nonce, recipient, vitality, version) context.
-    pub transcript_hash:   [u8; 32],
+    pub transcript_hash: [u8; 32],
     /// Recipient's operational public key — ensures key is recipient-specific.
     pub recipient_binding: [u8; 32],
 }

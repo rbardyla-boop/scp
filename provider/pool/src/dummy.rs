@@ -7,13 +7,16 @@ pub const DUMMY_QUERY_PROBABILITY: f64 = 0.05;
 pub const MAX_DUMMY_QUERIES_PER_MINUTE: u32 = 3;
 
 pub(crate) struct DummyQueryBudget {
-    count:        u32,
+    count: u32,
     window_start: Instant,
 }
 
 impl DummyQueryBudget {
     pub(crate) fn new() -> Self {
-        Self { count: 0, window_start: Instant::now() }
+        Self {
+            count: 0,
+            window_start: Instant::now(),
+        }
     }
 
     pub(crate) fn can_emit(&mut self) -> bool {

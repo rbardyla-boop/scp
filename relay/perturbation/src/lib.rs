@@ -34,7 +34,10 @@ struct DummyBudget {
 
 impl DummyBudget {
     fn new() -> Self {
-        Self { count: 0, window_start: Instant::now() }
+        Self {
+            count: 0,
+            window_start: Instant::now(),
+        }
     }
 
     fn can_emit(&mut self) -> bool {
@@ -135,8 +138,8 @@ impl PerturbationEngine {
         }
         let base_p = match vitality {
             VitalityState::Active => DUMMY_BURST_PROBABILITY,
-            VitalityState::Warm   => DUMMY_BURST_PROBABILITY * 0.5,
-            _                     => 0.0,
+            VitalityState::Warm => DUMMY_BURST_PROBABILITY * 0.5,
+            _ => 0.0,
         };
         // Small noise on the base probability prevents deterministic
         // vitality-volume correlation from becoming a relationship fingerprint.
@@ -147,6 +150,8 @@ impl PerturbationEngine {
 
 fn bucket_ceil(n: usize) -> usize {
     let b = MIN_PAYLOAD_BUCKET;
-    if n == 0 { return b; }
-    ((n + b - 1) / b) * b
+    if n == 0 {
+        return b;
+    }
+    n.div_ceil(b) * b
 }

@@ -1,6 +1,6 @@
 use scp_cryptography::keys::{hash, PublicKey};
-use scp_wire_format::signing::{registration_message, rotation_message, tunnel_consent_input};
 pub use scp_wire_format::signing::handshake_sig_message;
+use scp_wire_format::signing::{registration_message, rotation_message, tunnel_consent_input};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
@@ -20,14 +20,14 @@ pub const MAX_HANDSHAKE_EPHEMERALS: usize = 8;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeEphemeral {
     /// X25519 public key for use in sender-side DH.
-    pub pub_key:      [u8; 32],
+    pub pub_key: [u8; 32],
     /// Ed25519 signature by the ops key over `handshake_sig_message(pub_key, expires_at)`.
     /// Stored as Vec<u8> for serde compatibility (serde does not cover [u8; 64]).
-    pub sig:          Vec<u8>,
+    pub sig: Vec<u8>,
     /// Unix epoch seconds at publication.
     pub published_at: u64,
     /// Unix epoch seconds at expiration. Key must be rejected after this time.
-    pub expires_at:   u64,
+    pub expires_at: u64,
 }
 
 // ── Public types ────────────────────────────────────────────────────────────
@@ -108,7 +108,11 @@ impl SubstrateLedger {
         record: &LedgerIdentityRecord,
         root_sig: &[u8; 64],
     ) -> Result<(), LedgerError> {
-        let msg = registration_message(&record.k_root_pub, &record.k_ops_pub, &record.recovery_policy_hash);
+        let msg = registration_message(
+            &record.k_root_pub,
+            &record.k_ops_pub,
+            &record.recovery_policy_hash,
+        );
         if !PublicKey(record.k_root_pub).verify(&msg, root_sig) {
             return Err(LedgerError::InvalidSignature);
         }
@@ -139,7 +143,13 @@ impl SubstrateLedger {
         let root_pub = st
             .ops_keys
             .iter()
-            .find_map(|(root, ops)| if ops == old_ops_pub { Some(*root) } else { None })
+            .find_map(|(root, ops)| {
+                if ops == old_ops_pub {
+                    Some(*root)
+                } else {
+                    None
+                }
+            })
             .ok_or(LedgerError::NotFound)?;
 
         let msg = rotation_message(old_ops_pub, new_ops_pub, nonce);
@@ -156,11 +166,7 @@ impl SubstrateLedger {
     }
 
     /// Revoke an operational key. The root key signs over the revoked ops key.
-    pub fn revoke(
-        &self,
-        ops_pub: &[u8; 32],
-        root_sig: &[u8; 64],
-    ) -> Result<(), LedgerError> {
+    pub fn revoke(&self, ops_pub: &[u8; 32], root_sig: &[u8; 64]) -> Result<(), LedgerError> {
         let mut st = self.state.write().unwrap();
 
         let root_pub = st
@@ -180,7 +186,10 @@ impl SubstrateLedger {
     /// Query the current operational public key for a root identity.
     pub fn query_current_ops_key(&self, k_root_pub: &[u8; 32]) -> Result<[u8; 32], LedgerError> {
         let st = self.state.read().unwrap();
-        st.ops_keys.get(k_root_pub).copied().ok_or(LedgerError::NotFound)
+        st.ops_keys
+            .get(k_root_pub)
+            .copied()
+            .ok_or(LedgerError::NotFound)
     }
 
     /// Returns true if an operational key has been revoked.
@@ -194,8 +203,12 @@ impl SubstrateLedger {
     pub fn register_tunnel(&self, consent: TunnelConsent) -> Result<(), LedgerError> {
         let ch = tunnel_consent_hash(&consent.party_a, &consent.party_b);
 
-        let sig_a: [u8; 64] = consent.sig_a[..].try_into().map_err(|_| LedgerError::InvalidSignature)?;
-        let sig_b: [u8; 64] = consent.sig_b[..].try_into().map_err(|_| LedgerError::InvalidSignature)?;
+        let sig_a: [u8; 64] = consent.sig_a[..]
+            .try_into()
+            .map_err(|_| LedgerError::InvalidSignature)?;
+        let sig_b: [u8; 64] = consent.sig_b[..]
+            .try_into()
+            .map_err(|_| LedgerError::InvalidSignature)?;
 
         if !PublicKey(consent.party_a).verify(&ch, &sig_a) {
             return Err(LedgerError::InvalidSignature);

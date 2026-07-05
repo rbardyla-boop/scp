@@ -84,10 +84,16 @@ impl CosmosLedger {
         let root_pub = st
             .ops_keys
             .iter()
-            .find_map(|(root, ops)| if ops == old_ops_pub { Some(*root) } else { None })
+            .find_map(|(root, ops)| {
+                if ops == old_ops_pub {
+                    Some(*root)
+                } else {
+                    None
+                }
+            })
             .ok_or(LedgerError::NotFound)?;
         let msg = rotation_message(old_ops_pub, new_ops_pub, nonce);
-        if !PublicKey(root_pub).verify(&msg, &root_sig) {
+        if !PublicKey(root_pub).verify(&msg, root_sig) {
             return Err(LedgerError::InvalidSignature);
         }
         st.ops_keys.insert(root_pub, *new_ops_pub);
@@ -98,18 +104,14 @@ impl CosmosLedger {
         Ok(())
     }
 
-    pub fn revoke(
-        &self,
-        ops_pub: &[u8; 32],
-        root_sig: &[u8; 64],
-    ) -> Result<(), LedgerError> {
+    pub fn revoke(&self, ops_pub: &[u8; 32], root_sig: &[u8; 64]) -> Result<(), LedgerError> {
         let mut st = self.state.write().unwrap();
         let root_pub = st
             .ops_keys
             .iter()
             .find_map(|(root, ops)| if ops == ops_pub { Some(*root) } else { None })
             .ok_or(LedgerError::NotFound)?;
-        if !PublicKey(root_pub).verify(ops_pub, &root_sig) {
+        if !PublicKey(root_pub).verify(ops_pub, root_sig) {
             return Err(LedgerError::InvalidSignature);
         }
         st.revoked_ops.insert(*ops_pub);
@@ -117,7 +119,13 @@ impl CosmosLedger {
     }
 
     pub fn query_current_ops_key(&self, k_root_pub: &[u8; 32]) -> Result<[u8; 32], LedgerError> {
-        self.state.read().unwrap().ops_keys.get(k_root_pub).copied().ok_or(LedgerError::NotFound)
+        self.state
+            .read()
+            .unwrap()
+            .ops_keys
+            .get(k_root_pub)
+            .copied()
+            .ok_or(LedgerError::NotFound)
     }
 
     pub fn is_revoked(&self, ops_pub: &[u8; 32]) -> bool {
@@ -126,8 +134,12 @@ impl CosmosLedger {
 
     pub fn register_tunnel(&self, consent: TunnelConsent) -> Result<(), LedgerError> {
         let ch = tunnel_consent_hash(&consent.party_a, &consent.party_b);
-        let sig_a: [u8; 64] = consent.sig_a[..].try_into().map_err(|_| LedgerError::InvalidSignature)?;
-        let sig_b: [u8; 64] = consent.sig_b[..].try_into().map_err(|_| LedgerError::InvalidSignature)?;
+        let sig_a: [u8; 64] = consent.sig_a[..]
+            .try_into()
+            .map_err(|_| LedgerError::InvalidSignature)?;
+        let sig_b: [u8; 64] = consent.sig_b[..]
+            .try_into()
+            .map_err(|_| LedgerError::InvalidSignature)?;
         if !PublicKey(consent.party_a).verify(&ch, &sig_a) {
             return Err(LedgerError::InvalidSignature);
         }

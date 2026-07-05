@@ -49,7 +49,7 @@ pub struct SimVitalityEvaluationContext {
 }
 
 fn is_valid_control(v: f64) -> bool {
-    v.is_finite() && v >= 0.0 && v <= 1.0
+    v.is_finite() && (0.0..=1.0).contains(&v)
 }
 
 impl SimVitalityEvaluationContext {
@@ -69,24 +69,46 @@ impl SimVitalityEvaluationContext {
         r: f64,
         p: f64,
     ) -> Result<Self, SimVitalityContextError> {
-        if !is_valid_control(i) { return Err(SimVitalityContextError::InvalidI(i)); }
-        if !is_valid_control(r) { return Err(SimVitalityContextError::InvalidR(r)); }
-        if !is_valid_control(p) { return Err(SimVitalityContextError::InvalidP(p)); }
-        Ok(Self { consent_hash, now, i, r, p })
+        if !is_valid_control(i) {
+            return Err(SimVitalityContextError::InvalidI(i));
+        }
+        if !is_valid_control(r) {
+            return Err(SimVitalityContextError::InvalidR(r));
+        }
+        if !is_valid_control(p) {
+            return Err(SimVitalityContextError::InvalidP(p));
+        }
+        Ok(Self {
+            consent_hash,
+            now,
+            i,
+            r,
+            p,
+        })
     }
 
     /// Returns the pre-computed bilateral tunnel consent hash.
-    pub fn consent_hash(&self) -> [u8; 32] { self.consent_hash }
+    pub fn consent_hash(&self) -> [u8; 32] {
+        self.consent_hash
+    }
 
     /// Returns the simulated evaluation timestamp (Unix seconds).
-    pub fn now(&self) -> u64 { self.now }
+    pub fn now(&self) -> u64 {
+        self.now
+    }
 
     /// Returns the declared interaction entropy control.
-    pub fn i(&self) -> f64 { self.i }
+    pub fn i(&self) -> f64 {
+        self.i
+    }
 
     /// Returns the declared reciprocal participation control.
-    pub fn r(&self) -> f64 { self.r }
+    pub fn r(&self) -> f64 {
+        self.r
+    }
 
     /// Returns the declared perturbation pressure control.
-    pub fn p(&self) -> f64 { self.p }
+    pub fn p(&self) -> f64 {
+        self.p
+    }
 }

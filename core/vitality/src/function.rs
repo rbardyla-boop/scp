@@ -32,7 +32,7 @@ const PERTURBATION_WEIGHT: f64 = 0.20;
 /// - Probabilistic and non-binary — caller maps to VitalityState bands
 pub fn compute(params: VitalityParams) -> f64 {
     let time_decay = (-params.t / TAU_SECS).exp();
-    let engagement  = (params.i.clamp(0.0, 1.0) * params.r.clamp(0.0, 1.0)).sqrt();
+    let engagement = (params.i.clamp(0.0, 1.0) * params.r.clamp(0.0, 1.0)).sqrt();
     let perturbation_reduction = 1.0 - PERTURBATION_WEIGHT * params.p.clamp(0.0, 1.0);
 
     (time_decay * engagement * perturbation_reduction).clamp(0.0, 1.0)

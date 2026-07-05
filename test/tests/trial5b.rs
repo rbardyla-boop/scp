@@ -24,24 +24,27 @@
 // For floating-point outputs: (value - expected).abs() < 1e-12 tolerance.
 // Integer counter assertions are exact.
 
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 
+use scp_cryptography::keys::KeyPair;
+use scp_ledger_substrate::{tunnel_consent_hash, SubstrateLedger, TunnelConsent};
 use scp_provider_pool::{AdmissibilityError, ProviderPool, SamplingStrategy};
 use scp_vitality::SimVitalityEvaluationContext;
-use scp_ledger_substrate::{SubstrateLedger, TunnelConsent, tunnel_consent_hash};
-use scp_cryptography::keys::KeyPair;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-fn pid(byte: u8) -> [u8; 32] { [byte; 32] }
+fn pid(byte: u8) -> [u8; 32] {
+    [byte; 32]
+}
 
-fn seeded() -> StdRng { StdRng::seed_from_u64(0) }
+fn seeded() -> StdRng {
+    StdRng::seed_from_u64(0)
+}
 
 fn pool_with_admissible(k: usize, providers: &[u8]) -> ProviderPool<SubstrateLedger> {
     // Default bound: large enough never to be reached by existing tests.
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(k))
-        .with_admissible_tracking(1024);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(k)).with_admissible_tracking(1024);
     for &b in providers {
         pool.add(pid(b), SubstrateLedger::new());
     }
@@ -55,7 +58,6 @@ fn pool_without_admissible(k: usize, providers: &[u8]) -> ProviderPool<Substrate
     }
     pool
 }
-
 
 // ── T1: Valid paired response is credited to admissible surface ────────────────
 //
@@ -74,29 +76,42 @@ fn t1_valid_paired_response_is_admissible() {
     let mut pool = pool_with_admissible(1, &[1, 2, 3, 4]);
 
     let (_quorum, receipts) = pool.sample_with_receipts(&mut rng).unwrap();
-    assert_eq!(receipts.len(), 1, "RandomK(1) with 4 providers must issue 1 receipt");
+    assert_eq!(
+        receipts.len(),
+        1,
+        "RandomK(1) with 4 providers must issue 1 receipt"
+    );
 
     let receipt = receipts.into_iter().next().unwrap();
-    assert!(pool.record_admissible_response(&receipt).is_ok(),
-        "First presentation of a valid receipt must be accepted");
+    assert!(
+        pool.record_admissible_response(&receipt).is_ok(),
+        "First presentation of a valid receipt must be accepted"
+    );
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 1,
-        "admissible_response_total must be 1 after one valid paired response");
-    assert_eq!(snap.admissible_selection_total, 1,
-        "admissible_selection_total must be 1 — incremented at receipt issuance");
-    assert_eq!(snap.admissible_failure_total, 0,
-        "no failures recorded");
+    assert_eq!(
+        snap.admissible_response_total, 1,
+        "admissible_response_total must be 1 after one valid paired response"
+    );
+    assert_eq!(
+        snap.admissible_selection_total, 1,
+        "admissible_selection_total must be 1 — incremented at receipt issuance"
+    );
+    assert_eq!(snap.admissible_failure_total, 0, "no failures recorded");
     assert_eq!(
         snap.recent_admissible_response_ratio(),
         Some(1.0),
         "1 admissible response / 1 admissible selection = 1.0"
     );
     // Raw surface is unchanged by the admissible call.
-    assert_eq!(snap.response_total, 0,
-        "record_admissible_response() must NOT increment raw response_total");
-    assert_eq!(snap.selection_total, 1,
-        "sample_with_receipts() performs raw selection accounting exactly once");
+    assert_eq!(
+        snap.response_total, 0,
+        "record_admissible_response() must NOT increment raw response_total"
+    );
+    assert_eq!(
+        snap.selection_total, 1,
+        "sample_with_receipts() performs raw selection accounting exactly once"
+    );
 }
 
 // ── T2: Response without receipt excluded from admissible surface ─────────────
@@ -118,21 +133,29 @@ fn t2_response_without_receipt_excluded_from_admissible() {
     pool.record_response(pid(1));
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 0,
-        "unpaired record_response() must not touch admissible_response_total");
-    assert_eq!(snap.admissible_selection_total, 0,
-        "no receipts were issued: admissible_selection_total = 0");
+    assert_eq!(
+        snap.admissible_response_total, 0,
+        "unpaired record_response() must not touch admissible_response_total"
+    );
+    assert_eq!(
+        snap.admissible_selection_total, 0,
+        "no receipts were issued: admissible_selection_total = 0"
+    );
     assert_eq!(
         snap.recent_admissible_response_ratio(),
         None,
         "no admissible selections → ratio is None"
     );
     // Raw surface reflects the injection.
-    assert_eq!(snap.response_total, 1,
-        "raw response_total must be 1 after record_response()");
+    assert_eq!(
+        snap.response_total, 1,
+        "raw response_total must be 1 after record_response()"
+    );
     // Option C discrepancy is computable.
-    assert!(snap.response_total > snap.admissible_response_total,
-        "raw response_total > admissible_response_total demonstrates Option C discrepancy");
+    assert!(
+        snap.response_total > snap.admissible_response_total,
+        "raw response_total > admissible_response_total demonstrates Option C discrepancy"
+    );
 }
 
 // ── T3: Duplicate response for one receipt rejected ────────────────────────────
@@ -153,8 +176,11 @@ fn t3_duplicate_response_for_one_receipt_rejected() {
     let receipt = receipts.into_iter().next().unwrap();
 
     // First presentation: accepted.
-    assert_eq!(pool.record_admissible_response(&receipt), Ok(()),
-        "First presentation of a valid receipt must succeed");
+    assert_eq!(
+        pool.record_admissible_response(&receipt),
+        Ok(()),
+        "First presentation of a valid receipt must succeed"
+    );
     // Second presentation with same (now-consumed) receipt: rejected.
     assert_eq!(
         pool.record_admissible_response(&receipt),
@@ -163,8 +189,10 @@ fn t3_duplicate_response_for_one_receipt_rejected() {
     );
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 1,
-        "duplicate rejection: admissible_response_total must remain 1");
+    assert_eq!(
+        snap.admissible_response_total, 1,
+        "duplicate rejection: admissible_response_total must remain 1"
+    );
 }
 
 // ── T4: Wrong-provider outcome rejected ────────────────────────────────────────
@@ -195,13 +223,18 @@ fn t4_wrong_provider_response_rejected() {
     );
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 0,
-        "ProviderMismatch rejection must not increment admissible_response_total");
+    assert_eq!(
+        snap.admissible_response_total, 0,
+        "ProviderMismatch rejection must not increment admissible_response_total"
+    );
 
     // The original receipt (with the correct provider_id) must still be outstanding.
     // Verify by successfully using it now.
-    assert_eq!(pool.record_admissible_response(&original), Ok(()),
-        "Original receipt must still be in outstanding after ProviderMismatch rejection");
+    assert_eq!(
+        pool.record_admissible_response(&original),
+        Ok(()),
+        "Original receipt must still be in outstanding after ProviderMismatch rejection"
+    );
 }
 
 // ── T5: Valid paired failure is credited to admissible surface ─────────────────
@@ -220,14 +253,18 @@ fn t5_valid_paired_failure_is_admissible() {
     let (_quorum, receipts) = pool.sample_with_receipts(&mut rng).unwrap();
     let receipt = receipts.into_iter().next().unwrap();
 
-    assert_eq!(pool.record_admissible_failure(&receipt), Ok(()),
-        "First presentation to record_admissible_failure must succeed");
+    assert_eq!(
+        pool.record_admissible_failure(&receipt),
+        Ok(()),
+        "First presentation to record_admissible_failure must succeed"
+    );
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_failure_total, 1,
-        "admissible_failure_total must be 1 after one valid paired failure");
-    assert_eq!(snap.admissible_response_total, 0,
-        "no responses recorded");
+    assert_eq!(
+        snap.admissible_failure_total, 1,
+        "admissible_failure_total must be 1 after one valid paired failure"
+    );
+    assert_eq!(snap.admissible_response_total, 0, "no responses recorded");
 
     // Receipt is consumed — subsequent response attempt must fail.
     assert_eq!(
@@ -252,8 +289,10 @@ fn t6_failure_without_receipt_excluded_from_admissible() {
     pool.record_failure(pid(1));
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_failure_total, 0,
-        "unpaired record_failure() must not touch admissible_failure_total");
+    assert_eq!(
+        snap.admissible_failure_total, 0,
+        "unpaired record_failure() must not touch admissible_failure_total"
+    );
     assert_eq!(snap.admissible_response_total, 0);
     assert_eq!(snap.admissible_selection_total, 0);
 }
@@ -287,10 +326,14 @@ fn t7_response_after_failure_for_same_receipt_rejected() {
     );
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 0,
-        "Response after failure must not increment admissible_response_total");
-    assert_eq!(snap.admissible_failure_total, 1,
-        "admissible_failure_total must remain 1");
+    assert_eq!(
+        snap.admissible_response_total, 0,
+        "Response after failure must not increment admissible_response_total"
+    );
+    assert_eq!(
+        snap.admissible_failure_total, 1,
+        "admissible_failure_total must remain 1"
+    );
 }
 
 // ── T8: Stale-epoch receipt rejected ──────────────────────────────────────────
@@ -319,7 +362,11 @@ fn t8_stale_epoch_receipt_rejected() {
 
     // Rotate: epoch_count advances from 0 to 1; outstanding receipts are drained.
     pool.force_rotate(&mut rng);
-    assert_eq!(pool.epoch_count(), 1, "force_rotate must increment epoch_count to 1");
+    assert_eq!(
+        pool.epoch_count(),
+        1,
+        "force_rotate must increment epoch_count to 1"
+    );
 
     // Present the old receipt — must be rejected as stale.
     assert_eq!(
@@ -329,8 +376,10 @@ fn t8_stale_epoch_receipt_rejected() {
     );
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 0,
-        "Stale-epoch rejection must not increment admissible_response_total");
+    assert_eq!(
+        snap.admissible_response_total, 0,
+        "Stale-epoch rejection must not increment admissible_response_total"
+    );
 }
 
 // ── T9: Multi-provider receipts are distinct ──────────────────────────────────
@@ -350,26 +399,39 @@ fn t9_multi_provider_receipts_are_distinct() {
     let mut pool = pool_with_admissible(3, &[1, 2, 3, 4]);
 
     let (_quorum, receipts) = pool.sample_with_receipts(&mut rng).unwrap();
-    assert_eq!(receipts.len(), 3,
-        "RandomK(3) with 4 providers must issue 3 receipts");
+    assert_eq!(
+        receipts.len(),
+        3,
+        "RandomK(3) with 4 providers must issue 3 receipts"
+    );
 
     // Observation IDs must be mutually distinct.
     let oids: Vec<u64> = receipts.iter().map(|r| r.observation_id()).collect();
     let unique: std::collections::HashSet<u64> = oids.iter().copied().collect();
-    assert_eq!(unique.len(), 3,
-        "Three receipts from one call must have 3 distinct observation_ids");
+    assert_eq!(
+        unique.len(),
+        3,
+        "Three receipts from one call must have 3 distinct observation_ids"
+    );
 
     // All three accepted.
     for r in &receipts {
-        assert_eq!(pool.record_admissible_response(r), Ok(()),
-            "Each of the 3 distinct receipts must be accepted");
+        assert_eq!(
+            pool.record_admissible_response(r),
+            Ok(()),
+            "Each of the 3 distinct receipts must be accepted"
+        );
     }
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 3,
-        "admissible_response_total must be 3 after accepting all three receipts");
-    assert_eq!(snap.admissible_selection_total, 3,
-        "admissible_selection_total = 3 (one per issued receipt)");
+    assert_eq!(
+        snap.admissible_response_total, 3,
+        "admissible_response_total must be 3 after accepting all three receipts"
+    );
+    assert_eq!(
+        snap.admissible_selection_total, 3,
+        "admissible_selection_total = 3 (one per issued receipt)"
+    );
     assert_eq!(
         snap.recent_admissible_response_ratio(),
         Some(1.0),
@@ -397,8 +459,11 @@ fn t10_symmetric_suppression_visible_in_admissible_ratio() {
         let (_q, receipts) = pool.sample_with_receipts(&mut rng).unwrap();
         all_receipts.extend(receipts);
     }
-    assert_eq!(all_receipts.len(), 4,
-        "4 calls × RandomK(1) = 4 receipts total");
+    assert_eq!(
+        all_receipts.len(),
+        4,
+        "4 calls × RandomK(1) = 4 receipts total"
+    );
 
     // Present only 2 of the 4 receipts as responses.
     for r in all_receipts.iter().take(2) {
@@ -518,12 +583,17 @@ fn t12_admissible_tracker_opt_in_inactive_by_default() {
     }
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 0,
-        "admissible_response_total must be 0 when tracking not configured");
+    assert_eq!(
+        snap.admissible_response_total, 0,
+        "admissible_response_total must be 0 when tracking not configured"
+    );
     assert_eq!(snap.admissible_failure_total, 0);
     assert_eq!(snap.admissible_selection_total, 0);
-    assert_eq!(snap.recent_admissible_response_ratio(), None,
-        "recent_admissible_response_ratio() must be None when no admissible selections");
+    assert_eq!(
+        snap.recent_admissible_response_ratio(),
+        None,
+        "recent_admissible_response_ratio() must be None when no admissible selections"
+    );
 }
 
 // ── T13: Vitality send rotation policy untouched ──────────────────────────────
@@ -540,8 +610,8 @@ fn t12_admissible_tracker_opt_in_inactive_by_default() {
 fn t13_vitality_send_rotation_policy_untouched() {
     use scp_cryptography::x25519_generate_keypair;
     use scp_ledger_substrate::{HandshakeEphemeral, SubstrateLedger};
-    use scp_wire_format::signing::handshake_sig_message;
     use scp_vitality::VitalityEvidenceStore;
+    use scp_wire_format::signing::handshake_sig_message;
 
     let mut rng = seeded();
     let mut pool = pool_with_admissible(1, &[1, 2, 3, 4]);
@@ -565,18 +635,24 @@ fn t13_vitality_send_rotation_policy_untouched() {
     }
 
     // Verify epoch_count = 0: no rotation policy fired from telemetry signals.
-    assert_eq!(pool.epoch_count(), 0,
-        "No injection trace must trigger automatic rotation: epoch_count must remain 0");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "No injection trace must trigger automatic rotation: epoch_count must remain 0"
+    );
 
     // Verify telemetry snapshot: admissible fields are populated but raw fields are
     // also populated from raw injections. No automatic policy should consume either.
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.admissible_response_total, 2,
-        "2 admissible responses accepted");
-    assert_eq!(snap.admissible_selection_total, 4,
-        "4 receipts were issued");
-    assert_eq!(snap.response_total, 8,
-        "8 raw injections contribute to raw response_total");
+    assert_eq!(
+        snap.admissible_response_total, 2,
+        "2 admissible responses accepted"
+    );
+    assert_eq!(snap.admissible_selection_total, 4, "4 receipts were issued");
+    assert_eq!(
+        snap.response_total, 8,
+        "8 raw injections contribute to raw response_total"
+    );
 
     // SimVitalityEvaluationContext constructed with p = 0.0 — a declared constant.
     // NOT derived from snap.kappa, admissible_response_total, or any telemetry field.
@@ -588,10 +664,12 @@ fn t13_vitality_send_rotation_policy_untouched() {
         let consent = TunnelConsent {
             party_a: kp_a.public,
             party_b: kp_b.public,
-            sig_a:   kp_a.sign(&consent_hash).to_vec(),
-            sig_b:   kp_b.sign(&consent_hash).to_vec(),
+            sig_a: kp_a.sign(&consent_hash).to_vec(),
+            sig_b: kp_b.sign(&consent_hash).to_vec(),
         };
-        ledger.register_tunnel(consent).expect("bilateral tunnel registration must succeed");
+        ledger
+            .register_tunnel(consent)
+            .expect("bilateral tunnel registration must succeed");
         consent_hash
     };
     let (_, eph_pub) = x25519_generate_keypair();
@@ -599,20 +677,24 @@ fn t13_vitality_send_rotation_policy_untouched() {
     let expires_at = sim_now + 3_600;
     let sig: [u8; 64] = kp_a.sign(&handshake_sig_message(&eph_pub, expires_at));
     let eph = HandshakeEphemeral {
-        pub_key:      eph_pub,
-        sig:          sig.to_vec(),
+        pub_key: eph_pub,
+        sig: sig.to_vec(),
         published_at: sim_now,
         expires_at,
     };
-    ledger.publish_handshake_ephemeral(&kp_a.public, eph)
+    ledger
+        .publish_handshake_ephemeral(&kp_a.public, eph)
         .expect("ephemeral publish must succeed");
 
     // p = 0.0 is a test-declared constant, never derived from pool telemetry.
     let p_declared: f64 = 0.0;
     let ctx = SimVitalityEvaluationContext::new(ch, sim_now, 1.0, 1.0, p_declared)
         .expect("standard controls must be valid");
-    assert_eq!(ctx.p(), 0.0,
-        "p must equal the declared constant 0.0 — never derived from pool telemetry");
+    assert_eq!(
+        ctx.p(),
+        0.0,
+        "p must equal the declared constant 0.0 — never derived from pool telemetry"
+    );
 
     // Vitality evaluation is independent of pool telemetry fields.
     let store = VitalityEvidenceStore::new();
@@ -627,11 +709,13 @@ fn t13_vitality_send_rotation_policy_untouched() {
     // without incorporating admissible accounting.
     let pressure = pool.convergence_pressure();
     // kappa is in [0, 1]; it reflects raw selection distribution, not admissible totals.
-    assert!(pressure.kappa >= 0.0 && pressure.kappa <= 1.0,
-        "kappa must remain a raw selection entropy metric: in [0.0, 1.0]");
+    assert!(
+        pressure.kappa >= 0.0 && pressure.kappa <= 1.0,
+        "kappa must remain a raw selection entropy metric: in [0.0, 1.0]"
+    );
     // admissible fields do not appear in ConvergencePressure — structural proof.
     // The type ConvergencePressure has no admissible_* field; this compiles only
     // because no such field was added to it.
     let _ = pressure.liveness_weighted_kappa; // accessible raw field
-    // No admissible field on ConvergencePressure — verified by successful compilation.
+                                              // No admissible field on ConvergencePressure — verified by successful compilation.
 }

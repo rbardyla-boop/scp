@@ -52,8 +52,8 @@ fn setup_actors() -> TrialActors {
         .publish_handshake_ephemeral(
             &ops_kp_b.public,
             HandshakeEphemeral {
-                pub_key:      eph_pub_b,
-                sig:          sig.to_vec(),
+                pub_key: eph_pub_b,
+                sig: sig.to_vec(),
                 published_at: 0,
                 expires_at,
             },
@@ -67,11 +67,8 @@ fn setup_actors() -> TrialActors {
     }
 }
 
-async fn sender_envelope(
-    actors: &TrialActors,
-    payload: &[u8],
-) -> corridor::BurstEnvelope {
-    let cache  = WarmCache::new(Duration::from_secs(600));
+async fn sender_envelope(actors: &TrialActors, payload: &[u8]) -> corridor::BurstEnvelope {
+    let cache = WarmCache::new(Duration::from_secs(600));
     let engine = PerturbationEngine::passthrough();
 
     let state = FlashSession::retrieve_state(&actors.ledger, &actors.ops_pub_b)

@@ -33,13 +33,13 @@
 //   - Production readiness of ProviderPool for real network conditions at scale
 
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
 
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 use scp_ledger_substrate::SubstrateLedger;
 use scp_provider_pool::{ProviderPool, SamplingStrategy};
@@ -55,8 +55,12 @@ fn workspace_bin(name: &str) -> PathBuf {
     p
 }
 
-fn relay_bin() -> PathBuf { workspace_bin("scp-relay") }
-fn cli_bin()   -> PathBuf { workspace_bin("scp-cli") }
+fn relay_bin() -> PathBuf {
+    workspace_bin("scp-relay")
+}
+fn cli_bin() -> PathBuf {
+    workspace_bin("scp-cli")
+}
 
 fn bins_exist() -> bool {
     relay_bin().exists() && cli_bin().exists()
@@ -79,7 +83,10 @@ fn cleanup(dir: &PathBuf) {
 
 async fn wait_for_relay(port: u16) {
     for _ in 0..50 {
-        if tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await.is_ok() {
+        if tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .is_ok()
+        {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -89,7 +96,10 @@ async fn wait_for_relay(port: u16) {
 
 async fn wait_for_relay_down(port: u16) {
     for _ in 0..50 {
-        if tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await.is_err() {
+        if tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .is_err()
+        {
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -105,7 +115,9 @@ async fn wait_for_relay_down(port: u16) {
 
 async fn wait_for_addr_up(addr: &str) {
     for _ in 0..100 {
-        if tokio::net::TcpStream::connect(addr).await.is_ok() { return; }
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            return;
+        }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!("relay at {addr} did not become reachable in time");
@@ -113,7 +125,9 @@ async fn wait_for_addr_up(addr: &str) {
 
 async fn wait_for_addr_down(addr: &str) {
     for _ in 0..100 {
-        if tokio::net::TcpStream::connect(addr).await.is_err() { return; }
+        if tokio::net::TcpStream::connect(addr).await.is_err() {
+            return;
+        }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     panic!("relay at {addr} did not become unreachable in time");
@@ -169,26 +183,41 @@ async fn cli_run(args: &[&str]) -> (bool, String) {
 }
 
 fn contains_vocabulary_label(text: &str) -> bool {
-    let labels = ["Active", "Warm", "Dormant", "Suspended", "Severed", "Burned"];
+    let labels = [
+        "Active",
+        "Warm",
+        "Dormant",
+        "Suspended",
+        "Severed",
+        "Burned",
+    ];
     labels.iter().any(|&l| text.contains(l))
 }
 
-fn pid(byte: u8) -> [u8; 32] { [byte; 32] }
+fn pid(byte: u8) -> [u8; 32] {
+    [byte; 32]
+}
 
-fn seeded() -> StdRng { StdRng::seed_from_u64(0) }
+fn seeded() -> StdRng {
+    StdRng::seed_from_u64(0)
+}
 
 /// One real attempt: `scp-cli receive` against a real relay address, using a
 /// throwaway identity and a throwaway mailbox token. Success/failure of the
 /// process reflects real TCP reachability of the relay at `addr` — the relay
 /// has either not been started, is alive, or was killed for real.
-async fn real_receive_attempt(identity: &PathBuf, relay_addr: &str) -> (bool, String) {
+async fn real_receive_attempt(identity: &Path, relay_addr: &str) -> (bool, String) {
     let mailbox = "aa".repeat(32); // fixed dummy 64-hex mailbox; content is irrelevant here
     cli_run(&[
         "receive",
-        "--identity", identity.to_str().unwrap(),
-        "--relay", relay_addr,
-        "--mailbox", &mailbox,
-    ]).await
+        "--identity",
+        identity.to_str().unwrap(),
+        "--relay",
+        relay_addr,
+        "--mailbox",
+        &mailbox,
+    ])
+    .await
 }
 
 // ── Test 1: real killed relay reproduces Trial 2's T2 explicit-failure shape ─
@@ -217,26 +246,31 @@ async fn real_network_explicit_failure_matches_trial2_t2_shape() {
     // relay_a: healthy for the whole test.
     let port_a = free_port();
     let mut relay_a = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_a}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_a spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_a}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_a spawn must succeed");
     wait_for_relay(port_a).await;
     let addr_a = format!("127.0.0.1:{port_a}");
 
     // relay_b: started, then killed for real before any use.
     let port_b = free_port();
     let mut relay_b = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_b}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_b spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_b}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_b spawn must succeed");
     wait_for_relay(port_b).await;
     let addr_b = format!("127.0.0.1:{port_b}");
     relay_b.kill().await.ok();
     wait_for_relay_down(port_b).await;
 
     let mut rng = seeded();
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_liveness(2, u64::MAX); // dead when consecutive_failures >= 2
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_liveness(2, u64::MAX); // dead when consecutive_failures >= 2
     pool.add(pid(1), SubstrateLedger::new()); // backed by relay_a (healthy)
     pool.add(pid(2), SubstrateLedger::new()); // backed by relay_b (killed)
 
@@ -248,13 +282,21 @@ async fn real_network_explicit_failure_matches_trial2_t2_shape() {
     }
 
     // Fixed selection trace: pid(2) is now dead and filtered from sample().
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // Four real successful attempts against the healthy relay_a.
     for _ in 0..4 {
         let (ok, out) = real_receive_attempt(&identity, &addr_a).await;
-        assert!(ok, "receive against a live relay must succeed for real\noutput: {out}");
-        assert!(out.contains("exchange_complete"), "must see exchange_complete: {out}");
+        assert!(
+            ok,
+            "receive against a live relay must succeed for real\noutput: {out}"
+        );
+        assert!(
+            out.contains("exchange_complete"),
+            "must see exchange_complete: {out}"
+        );
         pool.record_response(pid(1));
     }
 
@@ -268,14 +310,20 @@ async fn real_network_explicit_failure_matches_trial2_t2_shape() {
     let snap = pool.operational_telemetry();
 
     // — Exactly Trial 2's T2 numbers, now real-network-driven ───────────────
-    assert_eq!(snap.active_n, 2,
-        "both providers remain in pool; dead provider is filtered from sample, not removed");
+    assert_eq!(
+        snap.active_n, 2,
+        "both providers remain in pool; dead provider is filtered from sample, not removed"
+    );
     assert!(snap.survivor_surface_evaluable);
-    assert_eq!(snap.kappa, 1.0,
-        "dead pid(2) excluded from real sampling → only pid(1) selected → kappa=1.0");
+    assert_eq!(
+        snap.kappa, 1.0,
+        "dead pid(2) excluded from real sampling → only pid(1) selected → kappa=1.0"
+    );
     assert!(snap.liveness_surface_evaluable);
-    assert_eq!(snap.liveness_weighted_kappa, 1.0,
-        "only pid(1) received real successful responses → liveness_weighted_kappa=1.0");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 1.0,
+        "only pid(1) received real successful responses → liveness_weighted_kappa=1.0"
+    );
     assert_eq!(snap.selection_total, 4);
     assert_eq!(snap.response_total, 4);
     assert_eq!(snap.recent_reported_response_ratio(), Some(1.0));
@@ -284,8 +332,11 @@ async fn real_network_explicit_failure_matches_trial2_t2_shape() {
     let state_after = vstore.compute_state(consent_hash, 1_000, 1.0, 1.0, 0.0);
     assert_eq!(state_after, VitalityState::Active,
         "driving pool telemetry from real network events must not alter VitalityEvidenceStore state");
-    assert_eq!(pool.epoch_count(), 0,
-        "operational_telemetry() must not trigger rotation even when fed real network data");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "operational_telemetry() must not trigger rotation even when fed real network data"
+    );
 
     relay_a.kill().await.ok();
     cleanup(&tmp);
@@ -313,13 +364,19 @@ async fn real_network_healthy_baseline_matches_trial2_uniform_shape() {
     let port_a = free_port();
     let port_b = free_port();
     let mut relay_a = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_a}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_a spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_a}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_a spawn must succeed");
     let mut relay_b = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_b}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_b spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_b}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_b spawn must succeed");
     wait_for_relay(port_a).await;
     wait_for_relay(port_b).await;
     let addr_a = format!("127.0.0.1:{port_a}");
@@ -331,16 +388,24 @@ async fn real_network_healthy_baseline_matches_trial2_uniform_shape() {
     pool.add(pid(2), SubstrateLedger::new());
 
     // 8 samples ≥ 4 * active_n(2) → Steady phase, matching Trial 2's T1 margin.
-    for _ in 0..8 { let _ = pool.sample(&mut rng); }
+    for _ in 0..8 {
+        let _ = pool.sample(&mut rng);
+    }
 
     for _ in 0..4 {
         let (ok, out) = real_receive_attempt(&identity, &addr_a).await;
-        assert!(ok, "receive against relay_a must succeed for real\noutput: {out}");
+        assert!(
+            ok,
+            "receive against relay_a must succeed for real\noutput: {out}"
+        );
         pool.record_response(pid(1));
     }
     for _ in 0..4 {
         let (ok, out) = real_receive_attempt(&identity, &addr_b).await;
-        assert!(ok, "receive against relay_b must succeed for real\noutput: {out}");
+        assert!(
+            ok,
+            "receive against relay_b must succeed for real\noutput: {out}"
+        );
         pool.record_response(pid(2));
     }
 
@@ -348,8 +413,10 @@ async fn real_network_healthy_baseline_matches_trial2_uniform_shape() {
 
     assert_eq!(snap.active_n, 2);
     assert!(snap.liveness_surface_evaluable);
-    assert_eq!(snap.liveness_weighted_kappa, 0.0,
-        "uniform real responses across both live relays → response_entropy=1 bit → kappa_L=0.0");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.0,
+        "uniform real responses across both live relays → response_entropy=1 bit → kappa_L=0.0"
+    );
     assert_eq!(snap.selection_total, 8);
     assert_eq!(snap.response_total, 8);
     assert_eq!(snap.recent_reported_response_ratio(), Some(1.0));
@@ -374,9 +441,12 @@ async fn real_network_liveness_trial_produces_no_vocabulary_labels() {
 
     let port = free_port();
     let mut relay = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay spawn must succeed");
     wait_for_relay(port).await;
     let addr = format!("127.0.0.1:{port}");
 
@@ -434,29 +504,40 @@ async fn real_mesh_explicit_failure_matches_trial2_t2_shape() {
     // "something is wrong with the CLI/telemetry plumbing itself".
     let port_a = free_port();
     let mut relay_a = Command::new(relay_bin())
-        .arg("--bind").arg(format!("127.0.0.1:{port_a}"))
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("relay_a spawn must succeed");
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port_a}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("relay_a spawn must succeed");
     wait_for_relay(port_a).await;
     let addr_a = format!("127.0.0.1:{port_a}");
 
     // Ensure the real remote relay is up before we start — it may already be
     // running from a prior manual trial (Level 2 left it running).
-    if tokio::net::TcpStream::connect(WOWSERVER_RELAY_ADDR).await.is_err() {
+    if tokio::net::TcpStream::connect(WOWSERVER_RELAY_ADDR)
+        .await
+        .is_err()
+    {
         ssh_restart_relay_on_wowserver().await;
         wait_for_addr_up(WOWSERVER_RELAY_ADDR).await;
     }
 
     let mut rng = seeded();
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_liveness(2, u64::MAX);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_liveness(2, u64::MAX);
     pool.add(pid(1), SubstrateLedger::new()); // local control
     pool.add(pid(2), SubstrateLedger::new()); // real wowserver mesh relay
 
     // Prove a real successful roundtrip over the actual mesh first.
     let (ok, out) = real_receive_attempt(&identity, WOWSERVER_RELAY_ADDR).await;
-    assert!(ok, "receive against the live wowserver relay must succeed for real\n{out}");
-    assert!(out.contains("exchange_complete"), "must see exchange_complete: {out}");
+    assert!(
+        ok,
+        "receive against the live wowserver relay must succeed for real\n{out}"
+    );
+    assert!(
+        out.contains("exchange_complete"),
+        "must see exchange_complete: {out}"
+    );
 
     // Kill it for real, over SSH, on the actual remote host.
     ssh_kill_relay_on_wowserver().await;
@@ -465,26 +546,38 @@ async fn real_mesh_explicit_failure_matches_trial2_t2_shape() {
     // Two real failed attempts against the now-really-dead remote relay.
     for _ in 0..2 {
         let (ok, _) = real_receive_attempt(&identity, WOWSERVER_RELAY_ADDR).await;
-        assert!(!ok, "receive against the killed remote relay must fail for real");
+        assert!(
+            !ok,
+            "receive against the killed remote relay must fail for real"
+        );
         pool.record_failure(pid(2));
     }
 
     // Fixed selection trace: pid(2) is now dead and filtered from sample().
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
 
     // Four real successful attempts against the healthy local control relay.
     for _ in 0..4 {
         let (ok, out) = real_receive_attempt(&identity, &addr_a).await;
-        assert!(ok, "receive against the local control relay must succeed for real\n{out}");
+        assert!(
+            ok,
+            "receive against the local control relay must succeed for real\n{out}"
+        );
         pool.record_response(pid(1));
     }
 
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.active_n, 2,
-        "both providers remain in pool; the dead remote relay is filtered from sample, not removed");
+    assert_eq!(
+        snap.active_n, 2,
+        "both providers remain in pool; the dead remote relay is filtered from sample, not removed"
+    );
     assert!(snap.survivor_surface_evaluable);
-    assert_eq!(snap.kappa, 1.0,
-        "dead remote relay excluded from real sampling → only local pid(1) selected → kappa=1.0");
+    assert_eq!(
+        snap.kappa, 1.0,
+        "dead remote relay excluded from real sampling → only local pid(1) selected → kappa=1.0"
+    );
     assert!(snap.liveness_surface_evaluable);
     assert_eq!(snap.liveness_weighted_kappa, 1.0,
         "only the healthy local relay received real successful responses → liveness_weighted_kappa=1.0");

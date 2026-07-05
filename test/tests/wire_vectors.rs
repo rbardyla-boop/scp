@@ -45,15 +45,17 @@ fn wire_transcript_v1_canonical_bytes() {
         0x01,
     );
     const EXPECTED: [u8; 63] = [
-         83,  67,  80, 116,   1,   // magic + format
-          1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,  // route_id
-          8,   7,   6,   5,   4,   3,   2,   1,               // nonce LE
-          2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,
-          2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,  // ops_pub
-          0,   1,                                               // vitality + version
+        83, 67, 80, 116, 1, // magic + format
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // route_id
+        8, 7, 6, 5, 4, 3, 2, 1, // nonce LE
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, // ops_pub
+        0, 1, // vitality + version
     ];
-    assert_eq!(got, EXPECTED,
-        "transcript_v1 canonical bytes do not match — field ordering or encoding has changed");
+    assert_eq!(
+        got, EXPECTED,
+        "transcript_v1 canonical bytes do not match — field ordering or encoding has changed"
+    );
 }
 
 #[test]
@@ -69,17 +71,19 @@ fn wire_transcript_v2_canonical_bytes() {
         &[0x03u8; 32],
     );
     const EXPECTED: [u8; 95] = [
-         83,  67,  80, 116,   2,   // magic + v2 format byte
-          1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,  // route_id
-          8,   7,   6,   5,   4,   3,   2,   1,               // nonce LE
-          2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,
-          2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,  // ops_pub
-          0,   1,                                               // vitality + version
-          3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,
-          3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,  // sender_ephemeral_pub
+        83, 67, 80, 116, 2, // magic + v2 format byte
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // route_id
+        8, 7, 6, 5, 4, 3, 2, 1, // nonce LE
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, // ops_pub
+        0, 1, // vitality + version
+        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, // sender_ephemeral_pub
     ];
-    assert_eq!(got, EXPECTED,
-        "transcript_v2 canonical bytes do not match — field ordering or encoding has changed");
+    assert_eq!(
+        got, EXPECTED,
+        "transcript_v2 canonical bytes do not match — field ordering or encoding has changed"
+    );
 }
 
 // ── Signing message vectors ───────────────────────────────────────────────────
@@ -93,17 +97,17 @@ fn wire_handshake_sig_message_canonical_bytes() {
     let got = handshake_sig_message(&[0x01u8; 32], 2000u64);
     const EXPECTED: [u8; 67] = [
         // "scp:handshake-ephemeral:v1:"
-        115, 99, 112, 58, 104, 97, 110, 100, 115, 104, 97, 107, 101, 45,
-        101, 112, 104, 101, 109, 101, 114, 97, 108, 58, 118, 49, 58,
-        // pub_key = [0x01; 32]
-          1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
-          1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
-        // expires_at = 2000 LE
-        208,   7,   0,   0,   0,   0,   0,   0,
+        115, 99, 112, 58, 104, 97, 110, 100, 115, 104, 97, 107, 101, 45, 101, 112, 104, 101, 109,
+        101, 114, 97, 108, 58, 118, 49, 58, // pub_key = [0x01; 32]
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, // expires_at = 2000 LE
+        208, 7, 0, 0, 0, 0, 0, 0,
     ];
-    assert_eq!(got, EXPECTED,
+    assert_eq!(
+        got, EXPECTED,
         "handshake_sig_message canonical bytes do not match — \
-         prefix string or encoding has changed");
+         prefix string or encoding has changed"
+    );
 }
 
 #[test]
@@ -114,15 +118,17 @@ fn wire_registration_message_canonical_bytes() {
     //   [64..96] recovery_policy_hash = [0x03; 32]
     let got = registration_message(&[0x01u8; 32], &[0x02u8; 32], &[0x03u8; 32]);
     const EXPECTED: [u8; 96] = [
-          1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
-          1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,  // k_root_pub
-          2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,
-          2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,  // k_ops_pub
-          3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,
-          3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,  // recovery_policy_hash
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, // k_root_pub
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, // k_ops_pub
+        3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, // recovery_policy_hash
     ];
-    assert_eq!(got, EXPECTED,
-        "registration_message canonical bytes do not match — field ordering has changed");
+    assert_eq!(
+        got, EXPECTED,
+        "registration_message canonical bytes do not match — field ordering has changed"
+    );
 }
 
 #[test]
@@ -133,11 +139,11 @@ fn wire_rotation_message_canonical_bytes() {
     //   [64..72] nonce       = 0x0102030405060708 LE = [8,7,6,5,4,3,2,1]
     let got = rotation_message(&[0x01u8; 32], &[0x02u8; 32], 0x0102030405060708u64);
     const EXPECTED: [u8; 72] = [
-          1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
-          1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,  // old_ops_pub
-          2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,
-          2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,  // new_ops_pub
-          8,   7,   6,   5,   4,   3,   2,   1,                                           // nonce LE
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, // old_ops_pub
+        2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+        2, 2, // new_ops_pub
+        8, 7, 6, 5, 4, 3, 2, 1, // nonce LE
     ];
     assert_eq!(got, EXPECTED,
         "rotation_message canonical bytes do not match — field ordering or nonce encoding has changed");
@@ -153,9 +159,15 @@ fn wire_rotation_message_canonical_bytes() {
 // File-private zero-fill RNG for deterministic testing.
 struct ZeroRng;
 impl rand_core::RngCore for ZeroRng {
-    fn next_u32(&mut self) -> u32 { 0 }
-    fn next_u64(&mut self) -> u64 { 0 }
-    fn fill_bytes(&mut self, dest: &mut [u8]) { dest.fill(0); }
+    fn next_u32(&mut self) -> u32 {
+        0
+    }
+    fn next_u64(&mut self) -> u64 {
+        0
+    }
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        dest.fill(0);
+    }
     fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
         dest.fill(0);
         Ok(())
@@ -167,9 +179,11 @@ fn route_id_with_zero_rng_is_all_zeros() {
     // ZeroRng::fill_bytes writes all 0x00 — no hidden entropy source in generate_with_rng.
     use scp_transport::session::RouteId;
     let id = RouteId::generate_with_rng(&mut ZeroRng);
-    assert_eq!(id.0, [0u8; 16],
+    assert_eq!(
+        id.0, [0u8; 16],
         "RouteId::generate_with_rng with a zero-output RNG must produce [0u8;16] — \
-         no hidden entropy injection");
+         no hidden entropy injection"
+    );
 }
 
 #[test]
@@ -177,9 +191,11 @@ fn freshness_nonce_with_zero_rng_is_zero() {
     // ZeroRng::next_u64 returns 0 — FreshnessNonce delegates directly to next_u64.
     use scp_transport::session::FreshnessNonce;
     let nonce = FreshnessNonce::generate_with_rng(&mut ZeroRng);
-    assert_eq!(nonce.0, 0,
+    assert_eq!(
+        nonce.0, 0,
         "FreshnessNonce::generate_with_rng with a zero-output RNG must produce 0 — \
-         the value is exactly next_u64() with no extra transformation");
+         the value is exactly next_u64() with no extra transformation"
+    );
 }
 
 #[test]
@@ -200,12 +216,14 @@ fn transport_key_material_kdf_golden() {
     material[64..96].fill(0x03);
     let actual = scp_derive_key(DomainLabel::Transport, &material);
     const EXPECTED: [u8; 32] = [
-         79,  77, 161,  42,  61, 167,  56,  16,  84, 171, 108, 162, 138, 130, 251,  39,
-         15, 245, 136, 247, 101,  18,   2,   6, 210, 121, 187,  66,  30,  78,  36,  97,
+        79, 77, 161, 42, 61, 167, 56, 16, 84, 171, 108, 162, 138, 130, 251, 39, 15, 245, 136, 247,
+        101, 18, 2, 6, 210, 121, 187, 66, 30, 78, 36, 97,
     ];
-    assert_eq!(actual, EXPECTED,
+    assert_eq!(
+        actual, EXPECTED,
         "transport key derivation golden vector changed — any diff is a breaking KDF change \
-         requiring an explicit protocol version bump");
+         requiring an explicit protocol version bump"
+    );
 }
 
 #[test]
@@ -219,19 +237,21 @@ fn recipient_state_commitment_golden() {
     use scp_transport::flash::RecipientState;
     use scp_vitality::VitalityState;
     let state = RecipientState {
-        ops_pub:             [0x01; 32],
-        vitality:            VitalityState::Active,
-        routing_hints:       vec![],
+        ops_pub: [0x01; 32],
+        vitality: VitalityState::Active,
+        routing_hints: vec![],
         handshake_ephemeral: None,
     };
     let actual = state.commitment();
     const EXPECTED: [u8; 32] = [
-        173, 236, 206, 177, 209,  40, 240, 251,  47, 199, 158,  38,  80,   3, 142, 116,
-        202, 129,  61,  65,  72,  82, 113, 204, 206, 237,  12,  56,  48,  99,   1, 208,
+        173, 236, 206, 177, 209, 40, 240, 251, 47, 199, 158, 38, 80, 3, 142, 116, 202, 129, 61, 65,
+        72, 82, 113, 204, 206, 237, 12, 56, 48, 99, 1, 208,
     ];
-    assert_eq!(actual, EXPECTED,
+    assert_eq!(
+        actual, EXPECTED,
         "RecipientState commitment golden vector changed — any diff is a breaking change to \
-         the state commitment encoding (ops_pub | vitality_byte | ephemeral_present)");
+         the state commitment encoding (ops_pub | vitality_byte | ephemeral_present)"
+    );
 }
 
 #[test]
@@ -251,8 +271,8 @@ fn x25519_dh_golden_with_known_keys() {
     };
     let actual = x25519_dh(&secret, &public);
     const EXPECTED: [u8; 32] = [
-        215, 181, 232,  29,  51, 110,  87, 139,  19, 184, 215,   6, 232,  45,   6,  30,
-         48,  56, 201, 107, 206, 102, 205, 207,  80, 213, 102, 185, 109, 219, 186,  16,
+        215, 181, 232, 29, 51, 110, 87, 139, 19, 184, 215, 6, 232, 45, 6, 30, 48, 56, 201, 107,
+        206, 102, 205, 207, 80, 213, 102, 185, 109, 219, 186, 16,
     ];
     assert_eq!(actual, EXPECTED,
         "X25519 DH golden vector changed — the raw DH output for this key pair must be stable \
@@ -270,8 +290,11 @@ fn wire_tcp_frame_canonical_bytes() {
     let payload = b"scp:v1";
     let frame = encode_tcp_frame(payload);
     const EXPECTED: &[u8] = &[6, 0, 0, 0, 0x73, 0x63, 0x70, 0x3a, 0x76, 0x31];
-    assert_eq!(frame.as_slice(), EXPECTED,
-        "TCP frame canonical bytes: 4-byte LE u32 length prefix + payload");
+    assert_eq!(
+        frame.as_slice(),
+        EXPECTED,
+        "TCP frame canonical bytes: 4-byte LE u32 length prefix + payload"
+    );
 
     let header: [u8; 4] = frame[..4].try_into().unwrap();
     assert_eq!(decode_tcp_length(&header), payload.len());
@@ -289,8 +312,11 @@ fn wire_noise_frame_canonical_bytes() {
     let payload = b"scp:v1";
     let frame = encode_noise_frame(payload);
     const EXPECTED: &[u8] = &[0, 6, 0x73, 0x63, 0x70, 0x3a, 0x76, 0x31];
-    assert_eq!(frame.as_slice(), EXPECTED,
-        "Noise frame canonical bytes: 2-byte BE u16 length prefix + payload");
+    assert_eq!(
+        frame.as_slice(),
+        EXPECTED,
+        "Noise frame canonical bytes: 2-byte BE u16 length prefix + payload"
+    );
 
     let header: [u8; 2] = frame[..2].try_into().unwrap();
     assert_eq!(decode_noise_length(&header), payload.len());

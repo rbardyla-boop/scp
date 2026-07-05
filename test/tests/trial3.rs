@@ -33,11 +33,13 @@
 //   If the stored timestamp were altered, at least one assertion would produce a
 //   different VitalityState than expected, catching any coupling.
 
-use rand::SeedableRng;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 use scp_cryptography::keys::KeyPair;
 use scp_cryptography::x25519_generate_keypair;
-use scp_ledger_substrate::{HandshakeEphemeral, SubstrateLedger, TunnelConsent, tunnel_consent_hash};
+use scp_ledger_substrate::{
+    tunnel_consent_hash, HandshakeEphemeral, SubstrateLedger, TunnelConsent,
+};
 use scp_provider_pool::{EpochPhase, ProviderPool, SamplingStrategy};
 use scp_relay_cache::WarmCache;
 use scp_relay_perturbation::PerturbationEngine;
@@ -51,21 +53,31 @@ use std::time::Duration;
 // scenarios but must not duplicate telemetry formulas, reproduce send-gating
 // rules, or bypass open_and_send_sim() for send-path assertions.
 
-fn pid(byte: u8) -> [u8; 32] { [byte; 32] }
+fn pid(byte: u8) -> [u8; 32] {
+    [byte; 32]
+}
 
 /// Deterministic RNG with fixed seed 0. Produces the same selection trace on every run.
-fn seeded() -> StdRng { StdRng::seed_from_u64(0) }
+fn seeded() -> StdRng {
+    StdRng::seed_from_u64(0)
+}
 
 /// Register bilateral tunnel consent between two keypairs and return the canonical consent hash.
-fn register_bilateral_consent(ledger: &SubstrateLedger, kp_a: &KeyPair, kp_b: &KeyPair) -> [u8; 32] {
+fn register_bilateral_consent(
+    ledger: &SubstrateLedger,
+    kp_a: &KeyPair,
+    kp_b: &KeyPair,
+) -> [u8; 32] {
     let ch = tunnel_consent_hash(&kp_a.public, &kp_b.public);
     let consent = TunnelConsent {
         party_a: kp_a.public,
         party_b: kp_b.public,
-        sig_a:   kp_a.sign(&ch).to_vec(),
-        sig_b:   kp_b.sign(&ch).to_vec(),
+        sig_a: kp_a.sign(&ch).to_vec(),
+        sig_b: kp_b.sign(&ch).to_vec(),
     };
-    ledger.register_tunnel(consent).expect("bilateral tunnel registration must succeed");
+    ledger
+        .register_tunnel(consent)
+        .expect("bilateral tunnel registration must succeed");
     ch
 }
 
@@ -78,12 +90,13 @@ fn publish_ephemeral_at(ledger: &SubstrateLedger, ops_kp: &KeyPair, sim_now: u64
     let expires_at = sim_now + 3_600;
     let sig: [u8; 64] = ops_kp.sign(&handshake_sig_message(&eph_pub, expires_at));
     let eph = HandshakeEphemeral {
-        pub_key:      eph_pub,
-        sig:          sig.to_vec(),
+        pub_key: eph_pub,
+        sig: sig.to_vec(),
         published_at: sim_now,
         expires_at,
     };
-    ledger.publish_handshake_ephemeral(&ops_kp.public, eph)
+    ledger
+        .publish_handshake_ephemeral(&ops_kp.public, eph)
         .expect("ephemeral publish must succeed");
     eph_secret
 }
@@ -94,8 +107,12 @@ fn std_ctx(consent_hash: [u8; 32], now: u64) -> SimVitalityEvaluationContext {
         .expect("standard controls must be valid")
 }
 
-fn warm_cache() -> WarmCache { WarmCache::new(Duration::from_secs(600)) }
-fn passthrough() -> PerturbationEngine { PerturbationEngine::passthrough() }
+fn warm_cache() -> WarmCache {
+    WarmCache::new(Duration::from_secs(600))
+}
+fn passthrough() -> PerturbationEngine {
+    PerturbationEngine::passthrough()
+}
 
 // ── T1: Healthy telemetry with Active vitality permits send ───────────────────
 //
@@ -112,8 +129,8 @@ fn passthrough() -> PerturbationEngine { PerturbationEngine::passthrough() }
 #[tokio::test]
 async fn t1_healthy_telemetry_active_vitality_permits_send() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -124,48 +141,82 @@ async fn t1_healthy_telemetry_active_vitality_permits_send() {
     // Healthy fixed trace: 16 samples, 4 responses per provider
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
-    for i in 1u8..=4 { for _ in 0..4 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
+    for i in 1u8..=4 {
+        for _ in 0..4 {
+            pool.record_response(pid(i));
+        }
+    }
 
     // — Expected healthy telemetry snapshot —
     let snap = pool.operational_telemetry();
     assert_eq!(snap.active_n, 4);
-    assert_eq!(snap.current_epoch_phase, EpochPhase::Steady,
-        "16 samples with 4 active providers must reach Steady phase");
+    assert_eq!(
+        snap.current_epoch_phase,
+        EpochPhase::Steady,
+        "16 samples with 4 active providers must reach Steady phase"
+    );
     assert!(snap.survivor_surface_evaluable);
     assert!(snap.liveness_surface_evaluable);
     assert!(snap.availability_evaluable);
     // Exact: uniform 4-provider response → response_entropy = log₂(4) → lwk = 0.0
-    assert_eq!(snap.liveness_weighted_kappa, 0.0,
-        "4 equal responses across 4 providers → response entropy = log₂(4) → lwk = 0.0");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.0,
+        "4 equal responses across 4 providers → response entropy = log₂(4) → lwk = 0.0"
+    );
     assert_eq!(snap.response_total, 16);
     assert_eq!(snap.selection_total, 16);
     assert_eq!(snap.recent_reported_response_ratio(), Some(1.0));
     // kappa: derived from exact seeded selection trace via proven exposure_estimate() API
     let est = pool.exposure_estimate();
     let expected_kappa = (1.0 - est.selection_entropy_bits / (4_f64).log2()).clamp(0.0, 1.0);
-    assert!((snap.kappa - expected_kappa).abs() < 1e-12,
-        "kappa must match value derived from seeded selection trace");
+    assert!(
+        (snap.kappa - expected_kappa).abs() < 1e-12,
+        "kappa must match value derived from seeded selection trace"
+    );
 
     // — Exact initial vitality evidence timestamp (proven via Active→Warm boundary) —
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "timestamp=t0: Active at t0+578_388");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm,
-        "timestamp=t0: Warm at t0+578_389 proves exact boundary");
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "timestamp=t0: Active at t0+578_388"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm,
+        "timestamp=t0: Warm at t0+578_389 proves exact boundary"
+    );
 
     // — send succeeds —
     let ctx = std_ctx(ch, t0);
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t1-payload", &warm_cache(), &passthrough(),
-    ).await;
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t1-payload",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
     assert!(result.is_ok(), "Active at t0 must permit send");
 
     // — evidence timestamp remains unchanged after send —
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "send must not refresh evidence: still Active at t0+578_388");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm,
-        "send must not refresh evidence: still Warm at t0+578_389");
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "send must not refresh evidence: still Active at t0+578_388"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm,
+        "send must not refresh evidence: still Warm at t0+578_389"
+    );
 }
 
 // ── T2: Explicit provider degradation changes telemetry but not Active send authorization ──
@@ -179,8 +230,8 @@ async fn t1_healthy_telemetry_active_vitality_permits_send() {
 #[tokio::test]
 async fn t2_provider_degradation_changes_telemetry_not_send_authorization() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -190,42 +241,67 @@ async fn t2_provider_degradation_changes_telemetry_not_send_authorization() {
 
     // Explicit provider-failure trace: pid(2) dead → only pid(1) in pool observations
     let mut rng = seeded();
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_liveness(2, u64::MAX);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_liveness(2, u64::MAX);
     pool.add(pid(1), SubstrateLedger::new());
     pool.add(pid(2), SubstrateLedger::new());
     pool.record_failure(pid(2));
     pool.record_failure(pid(2)); // consecutive_failures = 2 → dead
-    for _ in 0..4 { let _ = pool.sample(&mut rng); } // pid(2) filtered → only pid(1)
-    for _ in 0..4 { pool.record_response(pid(1)); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    } // pid(2) filtered → only pid(1)
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
 
     // — Telemetry changes to exact degraded output —
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.kappa, 1.0,
-        "dead pid(2) → only pid(1) selected → entropy=0 bits → kappa=1.0");
-    assert_eq!(snap.liveness_weighted_kappa, 1.0,
-        "only pid(1) responded → response_entropy=0 bits → lwk=1.0");
+    assert_eq!(
+        snap.kappa, 1.0,
+        "dead pid(2) → only pid(1) selected → entropy=0 bits → kappa=1.0"
+    );
+    assert_eq!(
+        snap.liveness_weighted_kappa, 1.0,
+        "only pid(1) responded → response_entropy=0 bits → lwk=1.0"
+    );
     assert_eq!(snap.selection_total, 4);
     assert_eq!(snap.response_total, 4);
     assert!(snap.survivor_surface_evaluable);
     assert!(snap.liveness_surface_evaluable);
 
     // — Vitality evidence timestamp unchanged —
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "pool failure trace must not alter evidence timestamp");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm);
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "pool failure trace must not alter evidence timestamp"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm
+    );
 
     // — ctx.p unchanged (0.0); computed vitality remains Active under fixed context —
     let ctx = std_ctx(ch, t0); // p = 0.0
-    assert_eq!(store.compute_state(ch, t0, 1.0, 1.0, 0.0), VitalityState::Active,
-        "computed vitality must remain Active at t0 with standard controls");
+    assert_eq!(
+        store.compute_state(ch, t0, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "computed vitality must remain Active at t0 with standard controls"
+    );
 
     // — Send still succeeds —
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t2-payload", &warm_cache(), &passthrough(),
-    ).await;
-    assert!(result.is_ok(),
-        "Active vitality must permit send despite degraded provider telemetry");
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t2-payload",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "Active vitality must permit send despite degraded provider telemetry"
+    );
 }
 
 // ── T3: Silent failure changes telemetry without mutating vitality ─────────────
@@ -242,8 +318,8 @@ async fn t2_provider_degradation_changes_telemetry_not_send_authorization() {
 #[tokio::test]
 async fn t3_silent_failure_changes_telemetry_not_vitality() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -256,43 +332,72 @@ async fn t3_silent_failure_changes_telemetry_not_vitality() {
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
     pool.add(pid(1), SubstrateLedger::new());
     pool.add(pid(2), SubstrateLedger::new()); // selected but silent
-    for _ in 0..8 { let _ = pool.sample(&mut rng); }
-    for _ in 0..8 { pool.record_response(pid(1)); } // only pid(1) responds
+    for _ in 0..8 {
+        let _ = pool.sample(&mut rng);
+    }
+    for _ in 0..8 {
+        pool.record_response(pid(1));
+    } // only pid(1) responds
 
     // — Exact expected telemetry distinction —
     let snap = pool.operational_telemetry();
-    let est  = pool.exposure_estimate();
+    let est = pool.exposure_estimate();
     // lwk = 1.0: only pid(1) in responses → response_entropy = 0 bits
-    assert_eq!(snap.liveness_weighted_kappa, 1.0,
-        "only pid(1) in responses → response_entropy=0 bits → lwk=1.0");
-    assert!(snap.liveness_surface_evaluable,
-        "response_total=8 > 0 AND selection_total=8 > 0 → evaluable");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 1.0,
+        "only pid(1) in responses → response_entropy=0 bits → lwk=1.0"
+    );
+    assert!(
+        snap.liveness_surface_evaluable,
+        "response_total=8 > 0 AND selection_total=8 > 0 → evaluable"
+    );
     assert_eq!(snap.selection_total, 8);
     assert_eq!(snap.response_total, 8);
     // kappa derived from seeded selection trace (not reimplemented — from proven exposure_estimate API)
     let expected_kappa = (1.0 - est.selection_entropy_bits / (2_f64).log2()).clamp(0.0, 1.0);
-    assert!((snap.kappa - expected_kappa).abs() < 1e-12,
-        "kappa must match value derived from seeded selection trace");
+    assert!(
+        (snap.kappa - expected_kappa).abs() < 1e-12,
+        "kappa must match value derived from seeded selection trace"
+    );
     // Silent-failure distinction: lwk ≥ kappa always; strictly > when pid(2) selected
-    assert!(snap.liveness_weighted_kappa >= snap.kappa,
-        "response entropy cannot exceed selection entropy");
+    assert!(
+        snap.liveness_weighted_kappa >= snap.kappa,
+        "response entropy cannot exceed selection entropy"
+    );
     if est.selection_entropy_bits > 0.0 {
-        assert!(snap.liveness_weighted_kappa > snap.kappa,
-            "pid(2) selected but silent → liveness surface rises above selection surface");
+        assert!(
+            snap.liveness_weighted_kappa > snap.kappa,
+            "pid(2) selected but silent → liveness surface rises above selection surface"
+        );
     }
 
     // — Vitality evidence timestamp unchanged —
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "silent failure trace must not alter evidence timestamp");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm);
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "silent failure trace must not alter evidence timestamp"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm
+    );
 
     // — Send governed only by unchanged Active vitality context —
     let ctx = std_ctx(ch, t0); // p = 0.0 unchanged
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t3-payload", &warm_cache(), &passthrough(),
-    ).await;
-    assert!(result.is_ok(),
-        "Active vitality must permit send despite silent provider failure");
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t3-payload",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "Active vitality must permit send despite silent provider failure"
+    );
 }
 
 // ── T4: Partial degradation remains observational only ───────────────────────
@@ -309,8 +414,8 @@ async fn t3_silent_failure_changes_telemetry_not_vitality() {
 #[tokio::test]
 async fn t4_partial_degradation_remains_observational_only() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -321,10 +426,18 @@ async fn t4_partial_degradation_remains_observational_only() {
     // Partial-degradation trace: only pid(1) and pid(2) respond
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
-    for _ in 0..4 { pool.record_response(pid(1)); }
-    for _ in 0..4 { pool.record_response(pid(2)); }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(2));
+    }
     // pid(3) and pid(4) are silent
 
     // — Exact intermediate telemetry output —
@@ -333,24 +446,43 @@ async fn t4_partial_degradation_remains_observational_only() {
     assert!(snap.liveness_surface_evaluable);
     assert!(snap.availability_evaluable);
     // −2 × (4/8 × log₂(4/8)) = 1.0 bit → 1 − 1.0/log₂(4) = 0.5
-    assert_eq!(snap.liveness_weighted_kappa, 0.5,
-        "2 of 4 providers responding uniformly → response_entropy=1.0 bit → lwk=0.5");
-    assert_eq!(snap.response_total, 8,
-        "4 + 4 responses; pid(3) and pid(4) are silent");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.5,
+        "2 of 4 providers responding uniformly → response_entropy=1.0 bit → lwk=0.5"
+    );
+    assert_eq!(
+        snap.response_total, 8,
+        "4 + 4 responses; pid(3) and pid(4) are silent"
+    );
     assert_eq!(snap.selection_total, 16);
 
     // — No vitality evidence mutation —
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "partial-degradation trace must not alter evidence timestamp");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm);
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "partial-degradation trace must not alter evidence timestamp"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm
+    );
 
     // — ctx.p unchanged (0.0); Active vitality still permits send —
     let ctx = std_ctx(ch, t0);
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t4-payload", &warm_cache(), &passthrough(),
-    ).await;
-    assert!(result.is_ok(),
-        "Active vitality must permit send despite partial provider degradation");
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t4-payload",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "Active vitality must permit send despite partial provider degradation"
+    );
 }
 
 // ── T5: Suspended vitality rejects send while telemetry remains healthy ───────
@@ -364,8 +496,8 @@ async fn t4_partial_degradation_remains_observational_only() {
 #[tokio::test]
 async fn t5_suspended_vitality_rejects_send_telemetry_remains_healthy() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -377,14 +509,24 @@ async fn t5_suspended_vitality_rejects_send_telemetry_remains_healthy() {
     // Healthy provider pool trace
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
-    for i in 1u8..=4 { for _ in 0..4 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
+    for i in 1u8..=4 {
+        for _ in 0..4 {
+            pool.record_response(pid(i));
+        }
+    }
 
     // — Telemetry remains at healthy expected snapshot —
     let snap = pool.operational_telemetry();
-    assert_eq!(snap.liveness_weighted_kappa, 0.0,
-        "healthy pool: uniform 4-provider response → lwk=0.0");
+    assert_eq!(
+        snap.liveness_weighted_kappa, 0.0,
+        "healthy pool: uniform 4-provider response → lwk=0.0"
+    );
     assert_eq!(snap.response_total, 16);
     assert_eq!(snap.selection_total, 16);
     assert_eq!(snap.recent_reported_response_ratio(), Some(1.0));
@@ -392,17 +534,31 @@ async fn t5_suspended_vitality_rejects_send_telemetry_remains_healthy() {
     // — Send blocked with VitalityInsufficient(Suspended) —
     let ctx = std_ctx(ch, t_suspended);
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t5-payload", &warm_cache(), &passthrough(),
-    ).await;
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t5-payload",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
     assert!(
-        matches!(result, Err(TransportError::VitalityInsufficient(VitalityState::Suspended))),
+        matches!(
+            result,
+            Err(TransportError::VitalityInsufficient(
+                VitalityState::Suspended
+            ))
+        ),
         "Suspended vitality must block send with VitalityInsufficient(Suspended)"
     );
 
     // — Rejection occurred without any provider-failure telemetry event —
     let snap_after = pool.operational_telemetry();
-    assert_eq!(snap_after.liveness_weighted_kappa, 0.0,
-        "healthy pool telemetry must be unchanged after vitality-blocked send attempt");
+    assert_eq!(
+        snap_after.liveness_weighted_kappa, 0.0,
+        "healthy pool telemetry must be unchanged after vitality-blocked send attempt"
+    );
     assert_eq!(snap_after.selection_total, 16);
     assert_eq!(snap_after.response_total, 16);
 }
@@ -422,8 +578,8 @@ async fn t5_suspended_vitality_rejects_send_telemetry_remains_healthy() {
 #[tokio::test]
 async fn t6_reaffirmation_restores_send_without_changing_provider_telemetry() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -434,12 +590,23 @@ async fn t6_reaffirmation_restores_send_without_changing_provider_telemetry() {
     // Fixed healthy provider snapshot — captured before reaffirmation
     let mut rng = seeded();
     let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1));
-    for i in 1u8..=4 { pool.add(pid(i), SubstrateLedger::new()); }
-    for _ in 0..16 { let _ = pool.sample(&mut rng); }
-    for i in 1u8..=4 { for _ in 0..4 { pool.record_response(pid(i)); } }
+    for i in 1u8..=4 {
+        pool.add(pid(i), SubstrateLedger::new());
+    }
+    for _ in 0..16 {
+        let _ = pool.sample(&mut rng);
+    }
+    for i in 1u8..=4 {
+        for _ in 0..4 {
+            pool.record_response(pid(i));
+        }
+    }
 
     let snap_before = pool.operational_telemetry();
-    assert_eq!(snap_before.liveness_weighted_kappa, 0.0, "healthy baseline before reaffirmation");
+    assert_eq!(
+        snap_before.liveness_weighted_kappa, 0.0,
+        "healthy baseline before reaffirmation"
+    );
     assert_eq!(snap_before.selection_total, 16);
     assert_eq!(snap_before.response_total, 16);
 
@@ -451,19 +618,34 @@ async fn t6_reaffirmation_restores_send_without_changing_provider_telemetry() {
 
     // — Construct restored Active simulator context —
     let ctx = std_ctx(ch, t_suspended);
-    assert_eq!(store.compute_state(ch, t_suspended, 1.0, 1.0, 0.0), VitalityState::Active,
-        "precondition after reaffirmation: Active at t_suspended");
+    assert_eq!(
+        store.compute_state(ch, t_suspended, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "precondition after reaffirmation: Active at t_suspended"
+    );
 
     // — Send succeeds —
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t6-payload", &warm_cache(), &passthrough(),
-    ).await;
-    assert!(result.is_ok(), "Active state after reaffirmation must permit send");
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t6-payload",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "Active state after reaffirmation must permit send"
+    );
 
     // — Provider telemetry remains exactly unchanged from the healthy trace —
     let snap_after = pool.operational_telemetry();
-    assert_eq!(snap_after.liveness_weighted_kappa, snap_before.liveness_weighted_kappa,
-        "reaffirmation must not alter provider telemetry");
+    assert_eq!(
+        snap_after.liveness_weighted_kappa, snap_before.liveness_weighted_kappa,
+        "reaffirmation must not alter provider telemetry"
+    );
     assert_eq!(snap_after.selection_total, snap_before.selection_total);
     assert_eq!(snap_after.response_total, snap_before.response_total);
     assert_eq!(snap_after.kappa, snap_before.kappa);
@@ -494,8 +676,8 @@ async fn t6_reaffirmation_restores_send_without_changing_provider_telemetry() {
 #[tokio::test]
 async fn t7_provider_recovery_changes_telemetry_not_vitality() {
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -504,48 +686,79 @@ async fn t7_provider_recovery_changes_telemetry_not_vitality() {
 
     // Phase 1: degradation trace
     let mut rng = seeded();
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_liveness(2, u64::MAX);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_liveness(2, u64::MAX);
     pool.add(pid(1), SubstrateLedger::new());
     pool.add(pid(2), SubstrateLedger::new());
     pool.record_failure(pid(2));
     pool.record_failure(pid(2)); // dead
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
-    for _ in 0..4 { pool.record_response(pid(1)); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
 
     // Telemetry changes exactly according to ProviderPool semantics
     let snap_degraded = pool.operational_telemetry();
-    assert_eq!(snap_degraded.liveness_weighted_kappa, 1.0, "degraded: lwk=1.0");
+    assert_eq!(
+        snap_degraded.liveness_weighted_kappa, 1.0,
+        "degraded: lwk=1.0"
+    );
 
     // Evidence timestamp unchanged after Phase 1
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "degradation trace must not alter evidence timestamp");
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "degradation trace must not alter evidence timestamp"
+    );
 
     // Phase 2: recovery via record_response(pid(2)) — resets consecutive_failures=0
-    for _ in 0..4 { pool.record_response(pid(2)); }
+    for _ in 0..4 {
+        pool.record_response(pid(2));
+    }
 
     // Telemetry changes exactly per ProviderPool semantics after recovery
     let snap_recovered = pool.operational_telemetry();
     // response_appearances = {pid(1): 4, pid(2): 4} → entropy=1 bit → lwk=0.0
-    assert_eq!(snap_recovered.liveness_weighted_kappa, 0.0,
-        "recovered: equal responses → response_entropy=log₂(2) → lwk=0.0");
-    assert_eq!(snap_recovered.response_total, 8, "4 (phase-1) + 4 (phase-2) = 8 total responses");
+    assert_eq!(
+        snap_recovered.liveness_weighted_kappa, 0.0,
+        "recovered: equal responses → response_entropy=log₂(2) → lwk=0.0"
+    );
+    assert_eq!(
+        snap_recovered.response_total, 8,
+        "4 (phase-1) + 4 (phase-2) = 8 total responses"
+    );
     assert!(snap_recovered.liveness_surface_evaluable);
 
     // Vitality evidence timestamp unchanged throughout both phases
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "recovery trace must not alter evidence timestamp");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm,
-        "timestamp is still t0: Warm at t0+578_389 boundary");
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "recovery trace must not alter evidence timestamp"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm,
+        "timestamp is still t0: Warm at t0+578_389 boundary"
+    );
 
     // Active send eligibility arises from unchanged vitality evidence and controls
     let _ = publish_ephemeral_at(&ledger, &bob, t0);
     let ctx = std_ctx(ch, t0);
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t7-payload", &warm_cache(), &passthrough(),
-    ).await;
-    assert!(result.is_ok(),
-        "Active vitality (unchanged) must permit send after provider recovery");
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t7-payload",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "Active vitality (unchanged) must permit send after provider recovery"
+    );
 }
 
 // ── T8: Simultaneous pressure trace preserves orthogonality boundary ──────────
@@ -570,8 +783,8 @@ async fn t7_provider_recovery_changes_telemetry_not_vitality() {
 async fn t8_simultaneous_pressure_preserves_orthogonality_boundary() {
     // 1. Construct valid Active bilateral corridor
     let ledger = SubstrateLedger::new();
-    let alice  = KeyPair::generate();
-    let bob    = KeyPair::generate();
+    let alice = KeyPair::generate();
+    let bob = KeyPair::generate();
     let ch = register_bilateral_consent(&ledger, &alice, &bob);
 
     let mut store = VitalityEvidenceStore::new();
@@ -580,28 +793,41 @@ async fn t8_simultaneous_pressure_preserves_orthogonality_boundary() {
     let _ = publish_ephemeral_at(&ledger, &bob, t0);
 
     // 2. Capture vitality evidence timestamp via Active→Warm boundary
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "precondition: timestamp is t0 → Active at t0+578_388");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm,
-        "precondition: timestamp is t0 → Warm at t0+578_389");
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "precondition: timestamp is t0 → Active at t0+578_388"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm,
+        "precondition: timestamp is t0 → Warm at t0+578_389"
+    );
 
     // 3. Run deterministic provider-degradation trace
     let mut rng = seeded();
-    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1))
-        .with_liveness(2, u64::MAX);
+    let mut pool = ProviderPool::new(SamplingStrategy::RandomK(1)).with_liveness(2, u64::MAX);
     pool.add(pid(1), SubstrateLedger::new());
     pool.add(pid(2), SubstrateLedger::new());
     pool.record_failure(pid(2));
     pool.record_failure(pid(2)); // dead
-    for _ in 0..4 { let _ = pool.sample(&mut rng); }
-    for _ in 0..4 { pool.record_response(pid(1)); }
+    for _ in 0..4 {
+        let _ = pool.sample(&mut rng);
+    }
+    for _ in 0..4 {
+        pool.record_response(pid(1));
+    }
 
     // 4. Capture degraded telemetry snapshot
     let snap_degraded = pool.operational_telemetry();
-    assert_eq!(snap_degraded.kappa, 1.0,
-        "degraded trace: only pid(1) selected → entropy=0 → kappa=1.0");
-    assert_eq!(snap_degraded.liveness_weighted_kappa, 1.0,
-        "degraded trace: only pid(1) responded → response_entropy=0 → lwk=1.0");
+    assert_eq!(
+        snap_degraded.kappa, 1.0,
+        "degraded trace: only pid(1) selected → entropy=0 → kappa=1.0"
+    );
+    assert_eq!(
+        snap_degraded.liveness_weighted_kappa, 1.0,
+        "degraded trace: only pid(1) responded → response_entropy=0 → lwk=1.0"
+    );
     assert_eq!(snap_degraded.selection_total, 4);
     assert_eq!(snap_degraded.response_total, 4);
     assert!(snap_degraded.survivor_surface_evaluable);
@@ -610,30 +836,54 @@ async fn t8_simultaneous_pressure_preserves_orthogonality_boundary() {
     // 5. Perform send through open_and_send_sim() using the unchanged Active vitality context
     let ctx = std_ctx(ch, t0); // p = 0.0; vitality context is unchanged
     let result = FlashSession::open_and_send_sim(
-        &ledger, &store, &ctx, &bob.public, b"t8-payload", &warm_cache(), &passthrough(),
-    ).await;
+        &ledger,
+        &store,
+        &ctx,
+        &bob.public,
+        b"t8-payload",
+        &warm_cache(),
+        &passthrough(),
+    )
+    .await;
     // Send succeeds because vitality remained Active
-    assert!(result.is_ok(),
-        "Active vitality must permit send despite simultaneous provider degradation");
+    assert!(
+        result.is_ok(),
+        "Active vitality must permit send despite simultaneous provider degradation"
+    );
 
     // 6. Read vitality evidence again — timestamp unchanged
-    assert_eq!(store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0), VitalityState::Active,
-        "vitality evidence timestamp unchanged: still Active at t0+578_388 after send");
-    assert_eq!(store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0), VitalityState::Warm,
-        "vitality evidence timestamp unchanged: still Warm at t0+578_389 after send");
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_388, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "vitality evidence timestamp unchanged: still Active at t0+578_388 after send"
+    );
+    assert_eq!(
+        store.compute_state(ch, t0 + 578_389, 1.0, 1.0, 0.0),
+        VitalityState::Warm,
+        "vitality evidence timestamp unchanged: still Warm at t0+578_389 after send"
+    );
 
     // ctx.p unchanged (0.0) — verified structurally: standard controls at t0 yield Active
-    assert_eq!(store.compute_state(ch, t0, 1.0, 1.0, 0.0), VitalityState::Active,
-        "ctx.p=0.0 unchanged: standard controls at t0 still yield Active");
+    assert_eq!(
+        store.compute_state(ch, t0, 1.0, 1.0, 0.0),
+        VitalityState::Active,
+        "ctx.p=0.0 unchanged: standard controls at t0 still yield Active"
+    );
 
     // 7. Inspect accessible rotation/epoch state
-    assert_eq!(pool.epoch_count(), 0,
-        "no operation must have triggered rotation: epoch_count=0");
+    assert_eq!(
+        pool.epoch_count(),
+        0,
+        "no operation must have triggered rotation: epoch_count=0"
+    );
 
     // Provider telemetry reflects degradation exactly and is unchanged from captured snapshot
     let snap_after = pool.operational_telemetry();
     assert_eq!(snap_after.kappa, snap_degraded.kappa);
-    assert_eq!(snap_after.liveness_weighted_kappa, snap_degraded.liveness_weighted_kappa);
+    assert_eq!(
+        snap_after.liveness_weighted_kappa,
+        snap_degraded.liveness_weighted_kappa
+    );
     assert_eq!(snap_after.selection_total, snap_degraded.selection_total);
     assert_eq!(snap_after.response_total, snap_degraded.response_total);
 }
