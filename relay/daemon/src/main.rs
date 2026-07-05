@@ -2,35 +2,63 @@
 //
 // NOT PRODUCTION. Mailbox token possession is the only access control.
 // Relay restart clears ALL in-memory mailbox contents (documented limitation).
+// Optional --store-dir enables bounded dev-harness mailbox persistence across
+// relay restarts. It is not a production storage/privacy design.
 // Routes only by DevMailboxId; never receives, stores, or logs identity keys.
 //
 // Wire protocol (per RUNTIME_BOOTSTRAP_PLAN.md §3.2):
 //   Store: [0x01][32 token][4 len LE][N payload bytes]  → [0x00 ack]
 //   Poll:  [0x02][32 token]  → [4 count LE][for each: [4 len LE][N bytes]]
 //
-// Usage: scp-relay [--bind 127.0.0.1:PORT]   default: 127.0.0.1:7700
+// Usage: scp-relay [--bind 127.0.0.1:PORT] [--store-dir PATH]
+//        default bind: 127.0.0.1:7700
 
 use std::collections::HashMap;
+use std::fs;
+use std::io::{self, ErrorKind, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-type MailboxStore = Arc<Mutex<HashMap<[u8; 32], Vec<Vec<u8>>>>>;
-
 const MAX_BURST_BYTES: usize = 1_048_576; // 1 MiB per burst
 const MAX_QUEUE_DEPTH: usize = 100; // oldest evicted on overflow
+const STORE_MAGIC: &[u8; 8] = b"SCPRLY1\n";
+
+type MailboxToken = [u8; 32];
+type Burst = Vec<u8>;
+type MailboxQueue = Vec<Burst>;
+type Mailboxes = HashMap<MailboxToken, MailboxQueue>;
+
+#[derive(Clone)]
+struct MailboxStore {
+    inner: Arc<Mutex<Mailboxes>>,
+    durable: Option<Arc<DurableStore>>,
+}
+
+struct DurableStore {
+    dir: PathBuf,
+}
+
+struct RelayConfig {
+    addr: String,
+    store_dir: Option<PathBuf>,
+}
 
 #[tokio::main]
 async fn main() {
-    let addr = parse_bind_arg();
-    run_relay(addr).await;
+    let config = parse_args();
+    run_relay(config).await;
 }
 
-async fn run_relay(addr: String) {
-    let listener = match TcpListener::bind(&addr).await {
+async fn run_relay(config: RelayConfig) {
+    let listener = match TcpListener::bind(&config.addr).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("{{\"event\":\"relay_bind_failed\",\"addr\":\"{addr}\",\"error\":\"{e}\"}}");
+            eprintln!(
+                "{{\"event\":\"relay_bind_failed\",\"addr\":\"{}\",\"error\":\"{e}\"}}",
+                config.addr
+            );
             std::process::exit(1);
         }
     };
@@ -38,13 +66,18 @@ async fn run_relay(addr: String) {
     let bound = listener.local_addr().unwrap();
     println!("{{\"event\":\"relay_listening\",\"addr\":\"{bound}\"}}");
 
-    let store: MailboxStore = Arc::new(Mutex::new(HashMap::new()));
+    let store = match MailboxStore::new(config.store_dir) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("{{\"event\":\"relay_store_failed\",\"error\":\"{e}\"}}");
+            std::process::exit(1);
+        }
+    };
 
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let s = Arc::clone(&store);
-                tokio::spawn(handle_connection(stream, s));
+                tokio::spawn(handle_connection(stream, store.clone()));
             }
             Err(e) => {
                 eprintln!("{{\"event\":\"relay_accept_error\",\"error\":\"{e}\"}}");
@@ -86,13 +119,12 @@ async fn handle_store(stream: &mut TcpStream, store: MailboxStore) {
         return;
     }
 
-    {
-        let mut mb = store.lock().unwrap();
-        let queue = mb.entry(token).or_default();
-        if queue.len() >= MAX_QUEUE_DEPTH {
-            queue.remove(0); // evict oldest burst on overflow
-        }
-        queue.push(payload);
+    if let Err(e) = store.store(token, payload) {
+        eprintln!(
+            "{{\"event\":\"relay_store_error\",\"mailbox\":\"{}\",\"error\":\"{e}\"}}",
+            hex(&token)
+        );
+        return;
     }
 
     println!(
@@ -108,9 +140,15 @@ async fn handle_poll(stream: &mut TcpStream, store: MailboxStore) {
         return;
     }
 
-    let bursts: Vec<Vec<u8>> = {
-        let mut mb = store.lock().unwrap();
-        mb.remove(&token).unwrap_or_default()
+    let bursts = match store.poll(token) {
+        Ok(bursts) => bursts,
+        Err(e) => {
+            eprintln!(
+                "{{\"event\":\"relay_poll_error\",\"mailbox\":\"{}\",\"error\":\"{e}\"}}",
+                hex(&token)
+            );
+            return;
+        }
     };
 
     if !bursts.is_empty() {
@@ -137,16 +175,172 @@ async fn handle_poll(stream: &mut TcpStream, store: MailboxStore) {
     }
 }
 
-fn parse_bind_arg() -> String {
+impl MailboxStore {
+    fn new(store_dir: Option<PathBuf>) -> io::Result<Self> {
+        let durable = match store_dir {
+            Some(dir) => Some(Arc::new(DurableStore::new(dir)?)),
+            None => None,
+        };
+
+        Ok(Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            durable,
+        })
+    }
+
+    fn store(&self, token: [u8; 32], payload: Vec<u8>) -> io::Result<()> {
+        let loaded = self.load_queue(&token)?;
+        let mut mb = self.inner.lock().unwrap();
+        let queue = mb.entry(token).or_insert(loaded);
+        if queue.len() >= MAX_QUEUE_DEPTH {
+            queue.remove(0); // evict oldest burst on overflow
+        }
+        queue.push(payload);
+        self.persist_queue(&token, queue)
+    }
+
+    fn poll(&self, token: [u8; 32]) -> io::Result<Vec<Vec<u8>>> {
+        let loaded = self.load_queue(&token)?;
+        let mut mb = self.inner.lock().unwrap();
+        let bursts = mb.remove(&token).unwrap_or(loaded);
+        self.delete_queue(&token)?;
+        Ok(bursts)
+    }
+
+    fn load_queue(&self, token: &[u8; 32]) -> io::Result<Vec<Vec<u8>>> {
+        match &self.durable {
+            Some(durable) => durable.load_queue(token),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn persist_queue(&self, token: &[u8; 32], queue: &[Vec<u8>]) -> io::Result<()> {
+        match &self.durable {
+            Some(durable) => durable.persist_queue(token, queue),
+            None => Ok(()),
+        }
+    }
+
+    fn delete_queue(&self, token: &[u8; 32]) -> io::Result<()> {
+        match &self.durable {
+            Some(durable) => durable.delete_queue(token),
+            None => Ok(()),
+        }
+    }
+}
+
+impl DurableStore {
+    fn new(dir: PathBuf) -> io::Result<Self> {
+        fs::create_dir_all(&dir)?;
+        Ok(Self { dir })
+    }
+
+    fn mailbox_path(&self, token: &[u8; 32]) -> PathBuf {
+        self.dir.join(format!("{}.mbox", hex(token)))
+    }
+
+    fn load_queue(&self, token: &[u8; 32]) -> io::Result<Vec<Vec<u8>>> {
+        let path = self.mailbox_path(token);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut file = fs::File::open(path)?;
+        let mut magic = [0u8; 8];
+        file.read_exact(&mut magic)?;
+        if &magic != STORE_MAGIC {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "invalid durable mailbox magic",
+            ));
+        }
+
+        let count = read_u32(&mut file)? as usize;
+        if count > MAX_QUEUE_DEPTH {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "durable mailbox exceeds max queue depth",
+            ));
+        }
+
+        let mut queue = Vec::with_capacity(count);
+        for _ in 0..count {
+            let len = read_u32(&mut file)? as usize;
+            if len > MAX_BURST_BYTES {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "durable mailbox burst exceeds max size",
+                ));
+            }
+            let mut payload = vec![0u8; len];
+            file.read_exact(&mut payload)?;
+            queue.push(payload);
+        }
+
+        Ok(queue)
+    }
+
+    fn persist_queue(&self, token: &[u8; 32], queue: &[Vec<u8>]) -> io::Result<()> {
+        if queue.is_empty() {
+            return self.delete_queue(token);
+        }
+
+        fs::create_dir_all(&self.dir)?;
+        let path = self.mailbox_path(token);
+        let tmp_path = tmp_path(&path);
+        {
+            let mut file = fs::File::create(&tmp_path)?;
+            file.write_all(STORE_MAGIC)?;
+            file.write_all(&(queue.len() as u32).to_le_bytes())?;
+            for burst in queue {
+                file.write_all(&(burst.len() as u32).to_le_bytes())?;
+                file.write_all(burst)?;
+            }
+            file.sync_all()?;
+        }
+        fs::rename(tmp_path, path)
+    }
+
+    fn delete_queue(&self, token: &[u8; 32]) -> io::Result<()> {
+        match fs::remove_file(self.mailbox_path(token)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+fn read_u32(reader: &mut impl Read) -> io::Result<u32> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    Ok(u32::from_le_bytes(buf))
+}
+
+fn tmp_path(path: &Path) -> PathBuf {
+    let mut tmp = path.to_path_buf();
+    tmp.set_extension("tmp");
+    tmp
+}
+
+fn parse_args() -> RelayConfig {
     let args: Vec<String> = std::env::args().collect();
+    let mut addr = "127.0.0.1:7700".to_string();
+    let mut store_dir = None;
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--bind" && i + 1 < args.len() {
-            return args[i + 1].clone();
+            addr = args[i + 1].clone();
+            i += 2;
+            continue;
+        }
+        if args[i] == "--store-dir" && i + 1 < args.len() {
+            store_dir = Some(PathBuf::from(&args[i + 1]));
+            i += 2;
+            continue;
         }
         i += 1;
     }
-    "127.0.0.1:7700".to_string()
+    RelayConfig { addr, store_dir }
 }
 
 fn hex(b: &[u8]) -> String {

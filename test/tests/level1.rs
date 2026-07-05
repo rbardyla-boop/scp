@@ -18,6 +18,7 @@
 //   - A → relay → B encrypted exchange delivers and decrypts the exact payload
 //   - Wrong mailbox token produces no bursts at receive
 //   - Relay restart clears in-memory mailbox contents
+//   - Opt-in durable relay storage survives restart and drains once
 //   - No vocabulary labels (Active, Warm, Dormant, Suspended, Severed, Burned) in output
 //
 // Claims NOT proven here:
@@ -67,6 +68,7 @@ fn free_port() -> u16 {
 
 fn test_tmp_dir(suffix: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("scp-level1-{suffix}"));
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create temp dir");
     dir
 }
@@ -399,7 +401,111 @@ async fn level1_relay_restart_clears_mailbox() {
     cleanup(&tmp);
 }
 
-// ── Test 4: No vocabulary labels in any command output ────────────────────────
+// ── Test 4: Opt-in durable relay survives restart and drains once ─────────────
+
+#[tokio::test]
+async fn level1_durable_relay_survives_restart_when_store_dir_set() {
+    if !bins_exist() {
+        return;
+    }
+
+    let port = free_port();
+    let tmp = test_tmp_dir(&format!("{port}durable"));
+    let store_dir = tmp.join("relay-store");
+
+    let mut relay = Command::new(relay_bin())
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
+        .arg("--store-dir")
+        .arg(&store_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("durable relay spawn");
+    wait_for_relay(port).await;
+
+    let alice_key = tmp.join("alice.key");
+    let bob_key = tmp.join("bob.key");
+    let bob_card = tmp.join("bob.card");
+
+    let (_, _) = cli_run(&["keygen", "--out", alice_key.to_str().unwrap()]).await;
+    let (_, bob_out) = cli_run(&["keygen", "--out", bob_key.to_str().unwrap()]).await;
+    std::fs::write(&bob_card, &bob_out).unwrap();
+
+    let (_, mailbox_out) = cli_run(&["mailbox-new"]).await;
+    let mailbox_id = extract_mailbox_id(&mailbox_out);
+    let relay_addr = format!("127.0.0.1:{port}");
+
+    cli_run(&[
+        "send",
+        "--identity",
+        alice_key.to_str().unwrap(),
+        "--recipient",
+        bob_card.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+        "--message",
+        "durable restart test",
+    ])
+    .await;
+
+    relay.kill().await.ok();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut relay2 = Command::new(relay_bin())
+        .arg("--bind")
+        .arg(format!("127.0.0.1:{port}"))
+        .arg("--store-dir")
+        .arg(&store_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("durable relay2 spawn");
+    wait_for_relay(port).await;
+
+    let (ok, recv_output) = cli_run(&[
+        "receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
+    assert!(ok, "receive after durable restart must succeed");
+    assert!(
+        recv_output.contains("durable restart test"),
+        "durable relay must deliver queued payload after restart; got: {recv_output}"
+    );
+    assert!(
+        recv_output.contains("\"count\":1"),
+        "durable relay must report one delivered burst; got: {recv_output}"
+    );
+
+    let (ok, recv_again) = cli_run(&[
+        "receive",
+        "--identity",
+        bob_key.to_str().unwrap(),
+        "--relay",
+        &relay_addr,
+        "--mailbox",
+        &mailbox_id,
+    ])
+    .await;
+    assert!(ok, "second receive after durable drain must succeed");
+    assert!(
+        recv_again.contains("\"count\":0"),
+        "durable mailbox must drain exactly once; got: {recv_again}"
+    );
+
+    relay2.kill().await.ok();
+    cleanup(&tmp);
+}
+
+// ── Test 5: No vocabulary labels in any command output ────────────────────────
 
 #[tokio::test]
 async fn level1_no_vocabulary_labels_in_output() {

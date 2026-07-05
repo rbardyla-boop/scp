@@ -253,6 +253,12 @@ Replace in-memory mailbox loss:
 
 This is the biggest line between demo and usable.
 
+Implementation note (2026-07-05): the first durable-relay gut-check is an
+opt-in `scp-relay --store-dir PATH` mode with bounded mailbox files and a
+restart-survival test. Default relay behavior remains ephemeral. This does not
+yet satisfy the full product-candidate gate because TTL, replay/dedup policy,
+production mailbox privacy, and storage hardening are still open.
+
 ### 6. Installer and Releases
 
 Make releases boring:
@@ -286,7 +292,7 @@ Deliver:
 
 Why first: no security risk, high public value, feeds the real Console.
 
-Implementation note (2026-07-05): Milestone A is now in progress. The trace
+Implementation note (2026-07-05): Milestone A is done. The trace
 artifact is `docs/design/corridor-console-validation/relay-kill-failover-live-2026-07-05.trace.json`,
 with a matching static copy served by the Pages app. The trace is intentionally
 aggregate-only: scenario metadata, relay counts, delivery counts, entropy,
@@ -333,20 +339,20 @@ They can matter later. Right now they slow down the first usable surface.
 
 ## Next Recommended Work Item
 
-Start with **Milestone A: Replay Demo Upgrade**.
+Start with the **durable relay gut-check**.
 
-It is the cleanest bridge from what is already live to something consumer-facing:
-it improves the public artifact, builds the data contract for the operator
-Console, and does not require pretending the network is production-ready.
+It is the shared floor beneath both fork choices: a human Corridor Preview and a
+private fleet-agent bus both fail if queued messages disappear on relay restart.
+The first pass should prove only bounded restart survival, while keeping the
+default dev harness ephemeral and preserving the public honesty boundary.
 
 Concrete first ticket:
 
-> Create `docs/design/corridor-console-validation/relay-kill-failover-live-2026-07-05.trace.json`
-> from the existing log/GIF evidence, then render it in the Pages app as a
-> timeline with an Exposure Meter and relay status strip.
+> Add opt-in relay storage behind `scp-relay --store-dir PATH`, keep default
+> relay storage in-memory, and add a Level 1 restart-survival test that proves
+> one queued message survives restart and drains exactly once.
 
 Success criterion:
 
-> A visitor can press play and understand: two relays configured, one relay
-> killed, delivery survives, exposure/relay-health metrics update, and the
-> caveat remains impossible to miss.
+> The old restart-loss test still passes without `--store-dir`, and the new
+> durable test passes with `--store-dir`.
