@@ -100,6 +100,11 @@ Console (the "whoa") → identity-continuity demo ("and it's a real system").
 of the field-team product needs ("health without exposing identity graphs"). Building the
 Console *is* building that product component. No wasted motion.
 
+Follow-on product plan:
+`docs/design/CONSUMER_FACING_PRODUCT_PLAN.md` defines the path from this public
+showcase to a consumer-facing Corridor Preview without turning dev-harness claims
+into production claims.
+
 ## Distribution: GitHub Pages
 
 GitHub Pages is the natural home for the zero-install layer of this wedge, but
