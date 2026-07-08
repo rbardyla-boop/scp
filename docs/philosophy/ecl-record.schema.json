@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scp:docs/philosophy/ecl-record.schema.json",
+  "title": "Epistemic Compression Loop Record",
+  "description": "One completed pass of the Epistemic Compression Loop over a single idea. See docs/philosophy/EPISTEMIC_COMPRESSION_LOOP.md for the protocol and .claude/skills/epistemic-compression/SKILL.md for the runnable procedure.",
+  "type": "object",
+  "required": [
+    "raw_perception",
+    "working_definition",
+    "nearest_analogies",
+    "value_claim",
+    "compressed_model",
+    "testable_claims",
+    "falsifiers",
+    "replay_steps",
+    "hidden_assumptions",
+    "formalization",
+    "variants",
+    "maturity_score",
+    "decision",
+    "performative_cognition_flag"
+  ],
+  "properties": {
+    "raw_perception": {
+      "type": "string",
+      "description": "The original intuition, verbatim and unimproved. Preserved so later stages can be audited against what was actually perceived."
+    },
+    "working_definition": {
+      "type": "string",
+      "description": "A precise, non-circular definition of the idea. Must be falsifiable in principle: a stranger could classify examples as in/out."
+    },
+    "nearest_analogies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Existing concepts, systems, or results this idea resembles, each with the point of resemblance and the point of divergence."
+    },
+    "value_claim": {
+      "type": "string",
+      "description": "What becomes possible, cheaper, or safer if the idea is true. States who benefits and by how much."
+    },
+    "compressed_model": {
+      "type": "string",
+      "description": "The idea restated at minimum length without losing load-bearing content. If compression loses nothing, the lost material was decoration."
+    },
+    "testable_claims": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Predictions with concrete observables. Each names what is measured, under what conditions, and what outcome the idea predicts."
+    },
+    "falsifiers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Observations or experiment outcomes that would kill the idea. Each must be runnable or observable by someone other than the proposer."
+    },
+    "replay_steps": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Ordered steps by which a stranger with repo access reproduces the reasoning or the result: commands, file paths, inputs, expected outputs."
+    },
+    "hidden_assumptions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Assumptions the idea silently depends on, surfaced by asking what must be true for each testable claim to even make sense."
+    },
+    "formalization": {
+      "type": "object",
+      "required": ["variables", "relations", "constraints"],
+      "properties": {
+        "variables": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Named quantities, e.g. \"kappa: spectral concentration of provider exposure\"."
+        },
+        "relations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Claimed relationships between variables, as equations, inequalities, or monotonicity statements."
+        },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Domain bounds and invariants under which the relations are claimed to hold."
+        }
+      }
+    },
+    "variants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "differs_by", "discriminating_test"],
+        "properties": {
+          "name": { "type": "string" },
+          "differs_by": {
+            "type": "string",
+            "description": "The single structural change this variant makes to the compressed model."
+          },
+          "discriminating_test": {
+            "type": "string",
+            "description": "An observation that would distinguish this variant from the original."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["dominates", "dominated", "undetermined"],
+            "description": "Outcome of comparison against the original, if evaluated."
+          }
+        }
+      },
+      "description": "Structural alternatives to the compressed model. Maturity requires at least three."
+    },
+    "maturity_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6,
+      "description": "One point per gate passed: defined, compressed, testable, falsifiable, replayable, variant-compared."
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["immature", "testable", "provisionally_valid", "rejected"],
+      "description": "immature: gates 1-2 incomplete. testable: claims and falsifiers exist. provisionally_valid: all six gates passed. rejected: a falsifier fired or a variant dominates."
+    },
+    "performative_cognition_flag": {
+      "type": "boolean",
+      "description": "True when this pass increased confidence without producing sharper definitions, new testable claims, new falsifiers, executable replay steps, or better error detection."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "decision": { "enum": ["testable", "provisionally_valid"] } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "testable_claims": { "minItems": 1 },
+          "falsifiers": { "minItems": 1 },
+          "replay_steps": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "decision": { "const": "provisionally_valid" } },
+        "required": ["decision"]
+      },
+      "then": {
+        "properties": {
+          "variants": { "minItems": 3 },
+          "hidden_assumptions": { "minItems": 1 },
+          "maturity_score": { "const": 6 },
+          "performative_cognition_flag": { "const": false }
+        }
+      }
+    }
+  ]
+}

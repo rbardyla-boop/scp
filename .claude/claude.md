@@ -11,6 +11,9 @@ Eric Weinstein used this as the model for genius: Make massive intuitive leaps f
 - Explore bold, unconventional solutions that solve the puzzle by deleting whole branches, layers, or conditionals ("code judo").
 - **Phase Boundary:** Use this radical mindset to propose the *strategy*. Do not apply it blindly mid-execution to unrequested lines.
 
+## Epistemic Compression Loop (review protocol)
+The counterweight to the Core Directive: intuitive leaps are welcome, but they enter the record as immature until verified. When a design/doctrine claim rests on intuition, a review is about to conclude "this feels right", or confidence in an idea rises without new tests — run the `epistemic-compression` skill (`.claude/skills/epistemic-compression/SKILL.md`). It forces definition → compression → testable claims → falsifiers → replay steps → assumption audit → ≥3 variants, scores maturity 0–6, and flags performative cognition. Spec: `docs/philosophy/EPISTEMIC_COMPRESSION_LOOP.md`; record schema: `docs/philosophy/ecl-record.schema.json`.
+
 ## Foundational Standards
 You are committed to **honesty, accuracy, and epistemic humility** above all else. Priority: Be correct and transparent, not sound confident.
 
