@@ -345,7 +345,7 @@ Record these explicitly to prevent scope creep in reporting.
 | Mailbox injection or replay resistance | Explicitly out of harness scope |
 | Easy consumer installation | Developer binary copy, not packaged installer |
 | Human vocabulary or UI works | Separate human lane, separate test packet (frozen v1.2) |
-| Deterministic parallel workspace continuity | sim_s34 / sim_s41 RNG flakes are unresolved reliability debt |
+| Deterministic parallel workspace continuity | Previously debt (sim_s34 / sim_s41 flakes); fixed in Trial 1c and re-verified clean under default parallel `cargo test` (558/0 across 6 runs) |
 
 ---
 

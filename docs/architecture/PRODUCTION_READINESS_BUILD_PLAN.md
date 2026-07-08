@@ -129,7 +129,7 @@ proven path; the production-readiness build gate below remains separate.
 
 4. Build.
    - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-   - `cargo test --workspace --all-targets --all-features -- --test-threads=1`
+   - `cargo test --workspace --all-targets --all-features`
    - `cargo build --release --workspace --all-targets --all-features`
    - `npm ci` in `client/desktop`
    - `npm run build` in `client/desktop`
@@ -160,7 +160,7 @@ These blockers remain outside this build gate. Passing the build gate does not c
 - [ ] `cargo metadata --no-deps` succeeds and matches the intended workspace members.
 - [ ] `cargo fmt --all --check` succeeds.
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` succeeds.
-- [ ] `cargo test --workspace --all-targets --all-features -- --test-threads=1` succeeds.
+- [ ] `cargo test --workspace --all-targets --all-features` succeeds (default parallel; re-verified 558/0).
 - [ ] `cargo build --release --workspace --all-targets --all-features` succeeds.
 - [ ] `npm ci` succeeds in `client/desktop`.
 - [ ] `npm run build` succeeds in `client/desktop`.

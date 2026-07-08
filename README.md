@@ -62,18 +62,18 @@ docs/        — philosophy · sts · threat-model · cryptography · transport
 | Option 2 — pool-liveness-gated multi-relay routing | `PROVIDERPOOL_MULTIRELAY_ROUTING_SEAM_PROVEN` |
 
 Workspace serial baseline at authorized commit `b2ac7f499cb4564cf746657f3b14d0252b12badf`: **429 passing, 0 failed**.
-Current HEAD serial baseline: **552 passing, 0 failed, 2 ignored** (live-mesh tests, run manually per `docs/architecture/LAN_DEV_HARNESS_RUNBOOK.md`).
+Current HEAD: **558 passing, 0 failed, 2 ignored** (live-mesh tests, run manually per `docs/architecture/LAN_DEV_HARNESS_RUNBOOK.md`). Re-verified under default parallel `cargo test --workspace`: 558 passed / 0 failed across 6 full runs.
 
 Binaries: `scp-cli` (Endpoint A/B) and `scp-relay` (relay node). See `docs/architecture/LAN_DEV_HARNESS_RUNBOOK.md` for deployment procedure.
 
-Note: `sim_s34` and `sim_s41` exhibit RNG-based flakiness under parallel execution. Use `--test-threads=1` for deterministic results.
+Note: `sim_s34` and `sim_s41` were historically RNG-flaky under parallel execution; this was fixed in Trial 1c by widening the statistical-margin window (they are seeded `PoolSimulator` tests, not entropy-dependent). As of `076402a` the workspace has been re-verified under default parallel `cargo test` — 558 passed / 0 failed across 6 full runs — so the old `--test-threads=1` workaround is no longer required for those tests. Serial execution remains supported.
 
 ## Quick Start
 
 ```bash
 cargo check --workspace
 cargo build --release
-cargo test --workspace -- --test-threads=1
+cargo test --workspace
 ```
 
 ## Planning Gates
